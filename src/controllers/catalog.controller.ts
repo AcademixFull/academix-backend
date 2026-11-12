@@ -91,7 +91,9 @@ export async function listInstructorCourses(
 ): Promise<void> {
   try {
     const { instructorId } = instructorIdentifierSchema.parse(req.params);
-    res.json(successResponse(await catalogService.listInstructorCourses(instructorId)));
+    const input = courseListQuerySchema.parse(req.query);
+    const result = await catalogService.listInstructorCoursesPage(instructorId, input);
+    res.json(paginatedResponse(result.items, result.pagination));
   } catch (error) {
     next(error);
   }

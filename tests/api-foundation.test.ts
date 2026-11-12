@@ -9,14 +9,14 @@ import { paginatedResponse } from "../src/utils/api-response";
 describe("base HTTP de la API", () => {
   const app = createApp();
 
-  it("permite el origen configurado y responde el preflight", async () => {
+  it.each(["http://localhost:5173", "http://localhost:4173"])("permite el origen configurado %s y responde el preflight", async (origin) => {
     const response = await request(app)
       .options("/api/v1/health")
-      .set("Origin", "http://localhost:5173")
+      .set("Origin", origin)
       .set("Access-Control-Request-Method", "GET");
 
     expect(response.status).toBe(204);
-    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(response.headers["access-control-allow-origin"]).toBe(origin);
   });
 
   it("rechaza un origen no autorizado con el contrato común", async () => {

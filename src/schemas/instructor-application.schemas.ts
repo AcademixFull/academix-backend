@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { paginationFields } from "./pagination.schemas";
 
 export const submitInstructorApplicationSchema = z.object({
   enrollmentId: z.string().trim().min(3).max(40),
@@ -10,6 +11,7 @@ export const instructorApplicationIdentifierSchema = z.object({
 });
 
 export const instructorApplicationListQuerySchema = z.object({
+  ...paginationFields,
   status: z.enum(["pending", "approved", "rejected"]).optional(),
 });
 
@@ -29,5 +31,6 @@ export const resolveInstructorApplicationSchema = z
     }
   });
 
+export type InstructorApplicationListQuery = z.infer<typeof instructorApplicationListQuerySchema>;
 export type SubmitInstructorApplicationInput = z.infer<typeof submitInstructorApplicationSchema>;
 export type ResolveInstructorApplicationInput = z.infer<typeof resolveInstructorApplicationSchema>;

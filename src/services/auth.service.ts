@@ -47,7 +47,7 @@ async function serializeUser(user: User): Promise<AuthUser> {
     throw new AppError(401, "INVALID_USER", "La cuenta no tiene un correo válido.");
   }
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("usuarios")
     .select(
       "nombres, apellido_paterno, apellido_materno, activo, usuarios_roles!fk_usuario_rol_usuario(activo, roles!fk_usuario_rol_rol(nombre))"
@@ -64,6 +64,10 @@ async function serializeUser(user: User): Promise<AuthUser> {
         usuarios_roles: Array<{ activo: boolean; roles: { nombre: string } | null }>;
       }
     | null;
+  if (error) throw new AppError(502, "PROFILE_LOOKUP_FAILED", "No fue posible verificar el estado de la cuenta.");
+  if (!profile) {
+    throw new AppError(403, "ACCOUNT_UNAVAILABLE", "La cuenta ya no está disponible.");
+  }
   if (profile && !profile.activo) {
     throw new AppError(403, "ACCOUNT_INACTIVE", "Tu cuenta está desactivada. Contacta a un administrador de Academix.");
   }

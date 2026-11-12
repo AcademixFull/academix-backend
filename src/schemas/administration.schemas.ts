@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { activeFilter, paginationFields } from "./pagination.schemas";
 
 const slugSchema = z
   .string()
@@ -7,15 +8,13 @@ const slugSchema = z
   .max(180)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "El slug no es válido.");
 
-const paginationSchema = {
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(50).default(20),
-};
-
 export const userListQuerySchema = z.object({
+  sort: z.enum(["name", "email", "createdAt"]).optional(),
+  direction: z.enum(["asc", "desc"]).optional(),
   search: z.string().trim().min(1).max(100).optional(),
-  role: z.enum(["student", "instructor", "moderator", "admin"]).optional(),
-  ...paginationSchema,
+  role: z.enum(["student", "instructor", "moderator", "admin", "institutional_administrator"]).optional(),
+  active: activeFilter,
+  ...paginationFields,
 });
 
 export const userIdentifierSchema = z.object({
@@ -75,6 +74,7 @@ const courseFields = {
   price: z.number().nonnegative().max(10_000_000).default(0),
   certificateEnabled: z.boolean().default(true),
   requiresApproval: z.boolean().default(false),
+  featuredVisible: z.boolean().optional(),
   organizationId: z.string().uuid("El identificador de la organización no es válido.").nullable().optional(),
 };
 
@@ -97,6 +97,7 @@ export const updateCourseSchema = z
     price: courseFields.price.optional(),
     certificateEnabled: courseFields.certificateEnabled.optional(),
     requiresApproval: courseFields.requiresApproval.optional(),
+    featuredVisible: courseFields.featuredVisible,
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -112,9 +113,11 @@ export const assignInstructorSchema = z.object({
 });
 
 export const managedCourseListQuerySchema = z.object({
+  scope: z.enum(["external", "institutional"]).optional(),
+  organizationId: z.string().uuid().optional(),
   search: z.string().trim().min(1).max(100).optional(),
   status: z.enum(["draft", "review", "published", "archived", "moderated"]).optional(),
-  ...paginationSchema,
+  ...paginationFields,
 });
 
 export type UserListQuery = z.infer<typeof userListQuerySchema>;

@@ -13,6 +13,7 @@ import contactRoutes from "./contact.routes";
 import organizationRoutes from "./organization.routes";
 import notificationRoutes from "./notification.routes";
 import moderationRoutes from "./moderation.routes";
+import subscriptionRoutes from "./subscription.routes";
 
 /**
  * Punto único donde se registran todos los routers de /api/v1.
@@ -23,6 +24,7 @@ import moderationRoutes from "./moderation.routes";
 const router = Router();
 
 router.use(healthRoutes);
+router.use(subscriptionRoutes);
 router.use("/auth", authRoutes);
 router.use("/contact", contactRoutes);
 router.use("/organizations", organizationRoutes);

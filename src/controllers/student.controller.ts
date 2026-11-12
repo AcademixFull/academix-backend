@@ -5,14 +5,30 @@ import {
   enrollmentCourseIdentifierSchema,
   lessonIdentifierSchema,
   updateLessonProgressSchema,
+  simulatedCheckoutSchema,
+  libraryListQuerySchema,
 } from "../schemas/student.schemas";
 import { lessonResourceIdentifierSchema } from "../schemas/authoring.schemas";
 import { studentService } from "../services/student.service";
-import { successResponse } from "../utils/api-response";
+import { successResponse, paginatedResponse } from "../utils/api-response";
 
 function userId(req: Request): string {
   if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Debes iniciar sesión.");
   return req.auth.user.id;
+}
+
+export async function simulatedCheckout(req: Request, res: Response, next: NextFunction) {
+  try {
+    const input = simulatedCheckoutSchema.parse(req.body);
+    res.json(successResponse(await studentService.checkout(userId(req), input)));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getLearningSummary(req: Request, res: Response, next: NextFunction) {
+  try { res.json(successResponse(await studentService.learningSummary(userId(req)))); }
+  catch (error) { next(error); }
 }
 
 export async function enrollInCourse(req: Request, res: Response, next: NextFunction) {
@@ -27,7 +43,8 @@ export async function enrollInCourse(req: Request, res: Response, next: NextFunc
 
 export async function listMyCourses(req: Request, res: Response, next: NextFunction) {
   try {
-    res.json(successResponse(await studentService.listMyCourses(userId(req))));
+    const result = await studentService.listMyCoursesPage(userId(req), libraryListQuerySchema.parse(req.query));
+    res.json(paginatedResponse(result.items, result.pagination));
   } catch (error) {
     next(error);
   }
@@ -40,6 +57,13 @@ export async function getLearningCourse(req: Request, res: Response, next: NextF
   } catch (error) {
     next(error);
   }
+}
+
+export async function getCourseOwnership(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { courseIds } = libraryListQuerySchema.required({ courseIds: true }).parse(req.query);
+    res.json(successResponse(await studentService.courseOwnership(userId(req), courseIds)));
+  } catch (error) { next(error); }
 }
 
 export async function updateLessonProgress(req: Request, res: Response, next: NextFunction) {

@@ -1,3 +1,4 @@
+import { listQuerySchema, type ListQuery } from "../schemas/pagination.schemas";
 import { AppError } from "../errors/app-error";
 import {
   administrationRepository,
@@ -51,9 +52,15 @@ type CoursePublicationNotifier = Pick<typeof notificationService, "coursePublish
 
 export function createAdministrationService(
   repository: AdministrationRepository,
-  notifier: CoursePublicationNotifier = notificationService
+  notifier: CoursePublicationNotifier = notificationService,
+  scopedOrganizations: Pick<typeof organizationService, "canInstructorCreateCourse"> = organizationService
 ) {
-  async function editableCourse(courseId: string, actorId: string, actorRole: AppRole) {
+  async function editableCourse(
+    courseId: string,
+    actorId: string,
+    actorRole: AppRole,
+    options: { allowModerated?: boolean } = {}
+  ) {
     if (actorRole === "moderator") {
       throw new AppError(403, "MODERATOR_READ_ONLY", "El rol Moderador no puede editar cursos ni precios.");
     }
@@ -61,16 +68,17 @@ export function createAdministrationService(
     if (course.status === "archived") {
       throw new AppError(409, "COURSE_ARCHIVED", "Un curso archivado no se puede modificar.");
     }
-    if (course.status === "moderated") {
+    if (course.status === "moderated" && !options.allowModerated) {
       throw new AppError(
         409,
         "COURSE_MODERATED",
-        "El curso está dado de baja por moderación. Corrige módulos, lecciones y recursos desde el editor de contenido; un Moderador o Administrador podrá restaurarlo cuando vuelva a cumplir."
+        "El curso está dado de baja por moderación. Corrige los datos o el contenido indicado; un Moderador o Administrador podrá restaurarlo cuando vuelva a cumplir."
       );
     }
     if (actorRole !== "admin") {
+      let institutionalAdministrator = false;
       if (course.organization) {
-        await organizationService.canInstructorCreateCourse(course.organization.id, actorId);
+        institutionalAdministrator = await scopedOrganizations.canInstructorCreateCourse(course.organization.id, actorId) === "administrator";
       } else if (actorRole !== "instructor") {
         throw new AppError(
           403,
@@ -78,13 +86,17 @@ export function createAdministrationService(
           "Para gestionar cursos independientes primero debes ser aprobado como instructor de Academix."
         );
       }
-      if (!(await repository.isInstructorAssigned(courseId, actorId))) {
+      if (!institutionalAdministrator && !(await repository.isInstructorAssigned(courseId, actorId))) {
         throw new AppError(403, "COURSE_NOT_ASSIGNED", "Solo puedes modificar cursos asignados.");
       }
       if (course.status === "review") {
         throw new AppError(409, "COURSE_UNDER_REVIEW", "El curso está siendo revisado por Academix.");
       }
-      if (course.status !== "draft" && course.status !== "published") {
+      const editableStatus =
+        course.status === "draft" ||
+        course.status === "published" ||
+        (course.status === "moderated" && options.allowModerated);
+      if (!editableStatus) {
         throw new AppError(409, "COURSE_NOT_EDITABLE", "Este curso no se puede editar en su estado actual.");
       }
     }
@@ -118,13 +130,14 @@ export function createAdministrationService(
       if (!active && current.roles.includes("admin") && !(await repository.hasAnotherActiveAdmin(userId))) {
         throw new AppError(409, "LAST_ADMIN_REQUIRED", "Academix debe conservar al menos un administrador activo.");
       }
-      const updated = await repository.setUserActive(userId, active);
+      const updated = await repository.setUserActive(userId, active, actorId);
       if (!updated) throw new AppError(404, "USER_NOT_FOUND", "El usuario solicitado no existe.");
       return updated;
     },
 
-    listInstructors() {
-      return repository.listInstructors();
+    async listInstructors(input: ListQuery = listQuerySchema.parse({})) {
+      const result = await repository.listInstructors(input);
+      return pagination(result.records, result.total, input.page, input.limit);
     },
 
     async upsertInstructor(userId: string, input: UpsertInstructorInput, actorId: string) {
@@ -152,8 +165,9 @@ export function createAdministrationService(
       );
     },
 
-    listCategories() {
-      return repository.listCategories();
+    async listCategories(input: ListQuery = listQuerySchema.parse({})) {
+      const result = await repository.listCategories(input);
+      return pagination(result.records, result.total, input.page, input.limit);
     },
 
     async updateCategory(categoryId: number, input: UpdateCategoryInput, actorId: string) {
@@ -181,11 +195,12 @@ export function createAdministrationService(
     },
 
     async createCourseForInstructor(input: CreateCourseInput, instructorId: string, actorRole: AppRole) {
+      if (input.featuredVisible !== undefined && actorRole !== "admin") throw new AppError(403, "FEATURED_ADMIN_REQUIRED", "Solo un administrador de Academix puede modificar los destacados.");
       if (actorRole === "moderator") {
         throw new AppError(403, "MODERATOR_READ_ONLY", "El rol Moderador no puede crear cursos desde sus permisos de moderación.");
       }
       if (input.organizationId) {
-        await organizationService.canInstructorCreateCourse(input.organizationId, instructorId);
+        await scopedOrganizations.canInstructorCreateCourse(input.organizationId, instructorId);
       } else if (actorRole !== "instructor") {
         throw new AppError(
           403,
@@ -218,7 +233,8 @@ export function createAdministrationService(
       actorId: string,
       actorRole: AppRole
     ) {
-      const current = await editableCourse(courseId, actorId, actorRole);
+      if (input.featuredVisible !== undefined && actorRole !== "admin") throw new AppError(403, "FEATURED_ADMIN_REQUIRED", "Solo un administrador de Academix puede modificar los destacados.");
+      const current = await editableCourse(courseId, actorId, actorRole, { allowModerated: true });
       const priceChanged = input.price !== undefined && input.price !== current.price;
       if (current.status === "published" && input.slug && input.slug !== current.slug) {
         throw new AppError(409, "PUBLISHED_SLUG_IMMUTABLE", "El slug publicado no se puede cambiar.");
@@ -303,13 +319,14 @@ export function createAdministrationService(
       }
       const course = requireCourse(await repository.findCourse(courseId));
       if (actorRole !== "admin") {
-        if (!(await repository.isInstructorAssigned(courseId, actorId))) {
-          throw new AppError(403, "COURSE_NOT_ASSIGNED", "Solo puedes dar de baja cursos asignados a ti.");
-        }
+        let institutionalAdministrator = false;
         if (course.organization) {
-          await organizationService.canInstructorCreateCourse(course.organization.id, actorId);
+          institutionalAdministrator = await scopedOrganizations.canInstructorCreateCourse(course.organization.id, actorId) === "administrator";
         } else if (actorRole !== "instructor") {
           throw new AppError(403, "EXTERNAL_INSTRUCTOR_APPROVAL_REQUIRED", "No tienes acceso a este curso independiente.");
+        }
+        if (!institutionalAdministrator && !(await repository.isInstructorAssigned(courseId, actorId))) {
+          throw new AppError(403, "COURSE_NOT_ASSIGNED", "Solo puedes dar de baja cursos asignados a ti.");
         }
       }
       if (course.status === "moderated") {

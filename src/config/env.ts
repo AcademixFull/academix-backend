@@ -44,6 +44,8 @@ export function parseFrontendOrigins(value: string): string[] {
 }
 
 const envSchema = z.object({
+  CATALOG_CACHE_TTL_MS: z.coerce.number().int().min(100).max(3_600_000).default(30_000),
+  CATALOG_CACHE_MAX_ITEMS: z.coerce.number().int().min(1).max(1000).default(128),
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
@@ -56,7 +58,7 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   FRONTEND_URL: z
-    .string({ required_error: "FRONTEND_URL es obligatoria (se usa para configurar CORS)." })
+    .string({ error: "FRONTEND_URL es obligatoria (se usa para configurar CORS)." })
     .min(1)
     .refine(
       (value) => {
@@ -71,13 +73,13 @@ const envSchema = z.object({
     ),
   SUPABASE_URL: z.string().url("SUPABASE_URL debe ser una URL válida."),
   SUPABASE_PUBLISHABLE_KEY: z
-    .string({ required_error: "SUPABASE_PUBLISHABLE_KEY es obligatoria." })
+    .string({ error: "SUPABASE_PUBLISHABLE_KEY es obligatoria." })
     .min(1),
   SUPABASE_SECRET_KEY: z
-    .string({ required_error: "SUPABASE_SECRET_KEY es obligatoria." })
+    .string({ error: "SUPABASE_SECRET_KEY es obligatoria." })
     .min(1),
   PASSWORD_RESET_REDIRECT_URL: z
-    .string({ required_error: "PASSWORD_RESET_REDIRECT_URL es obligatoria." })
+    .string({ error: "PASSWORD_RESET_REDIRECT_URL es obligatoria." })
     .url("PASSWORD_RESET_REDIRECT_URL debe ser una URL válida.")
     .refine(
       (value) => ["http:", "https:"].includes(new URL(value).protocol),

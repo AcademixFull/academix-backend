@@ -7,7 +7,7 @@ import {
   submitInstructorApplicationSchema,
 } from "../schemas/instructor-application.schemas";
 import { instructorApplicationService } from "../services/instructor-application.service";
-import { successResponse } from "../utils/api-response";
+import { paginatedResponse, successResponse } from "../utils/api-response";
 
 function actor(req: Request) {
   if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Debes iniciar sesión.");
@@ -31,8 +31,8 @@ export const submitInstructorApplication = handler(async (req, res) => {
 });
 
 export const listInstructorApplications = handler(async (req, res) => {
-  const { status } = instructorApplicationListQuerySchema.parse(req.query);
-  res.json(successResponse(await instructorApplicationService.list(status)));
+  const result = await instructorApplicationService.list(instructorApplicationListQuerySchema.parse(req.query));
+  res.json(paginatedResponse(result.items, result.pagination));
 });
 
 export const resolveInstructorApplication = handler(async (req, res) => {

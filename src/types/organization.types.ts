@@ -11,6 +11,11 @@ export interface OrganizationSummary {
   memberCount: number;
   joinCode: string | null;
   createdAt: string;
+  ownerId?: string;
+  isOwner?: boolean;
+  active?: boolean;
+  subscription?: { active: boolean; startsAt: string | null; endsAt: string | null };
+  capabilities?: { canDelete: boolean; canManageMembers: boolean; canManageCourses: boolean; canLearn: boolean };
 }
 
 export interface OrganizationMember {

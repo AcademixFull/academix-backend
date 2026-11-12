@@ -15,6 +15,7 @@ interface CertificateRow {
 }
 
 export interface CertificateRepository {
+  listPageByUser(userId: string, input: { page: number; limit: number }): Promise<{ records: CertificateDetail[]; total: number }>;
   listByUser(userId: string): Promise<CertificateDetail[]>;
   findForUser(userId: string, certificateId: string): Promise<CertificateDetail | null>;
   findByCredentialCode(credentialCode: string): Promise<CertificateDetail | null>;
@@ -54,6 +55,15 @@ const CERTIFICATE_COLUMNS = [
 ].join(",");
 
 export const certificateRepository: CertificateRepository = {
+  async listPageByUser(userId, input) {
+    const offset = (input.page - 1) * input.limit;
+    const { data, error, count } = await supabaseAdmin.from("certificados")
+      .select(CERTIFICATE_COLUMNS, { count: "exact" }).eq("fk_usuario", userId).eq("activo", true)
+      .order("fecha_emision", { ascending: false }).order("id_certificado")
+      .range(offset, offset + input.limit - 1);
+    if (error) throw databaseFailure();
+    return { records: ((data ?? []) as unknown as CertificateRow[]).map(serialize), total: count ?? 0 };
+  },
   async listByUser(userId) {
     const { data, error } = await supabaseAdmin
       .from("certificados")

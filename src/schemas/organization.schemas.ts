@@ -1,4 +1,15 @@
 import { z } from "zod";
+import { listQuerySchema } from "./pagination.schemas";
+import { managedCourseListQuerySchema } from "./administration.schemas";
+
+export const organizationMemberListQuerySchema = listQuerySchema.extend({
+  role: z.enum(["administrator", "instructor", "student"]).optional(),
+  sort: z.enum(["name", "email", "joinedAt"]).optional(),
+  direction: z.enum(["asc", "desc"]).optional(),
+});
+export const organizationCourseListQuerySchema = managedCourseListQuerySchema.omit({ scope: true, organizationId: true });
+export type OrganizationMemberListQuery = z.infer<typeof organizationMemberListQuerySchema>;
+export type OrganizationCourseListQuery = z.infer<typeof organizationCourseListQuerySchema>;
 
 const slugSchema = z
   .string()

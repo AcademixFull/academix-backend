@@ -9,7 +9,8 @@ import type {
   SubmitInstructorApplicationInput,
 } from "../schemas/instructor-application.schemas";
 import type { AppRole } from "../types/administration.types";
-import type { InstructorApplicationStatus } from "../types/instructor-application.types";
+import { instructorApplicationListQuerySchema, type InstructorApplicationListQuery } from "../schemas/instructor-application.schemas";
+import { pageResult } from "../utils/pagination";
 
 export function createInstructorApplicationService(
   repository: InstructorApplicationRepository,
@@ -34,8 +35,9 @@ export function createInstructorApplicationService(
       return repository.create(userId, input.enrollmentId, input.credentialReference);
     },
 
-    list(status?: InstructorApplicationStatus) {
-      return repository.list(status);
+    async list(input: InstructorApplicationListQuery = instructorApplicationListQuerySchema.parse({})) {
+      const result = await repository.list(input);
+      return pageResult(result.records, result.total, input.page, input.limit);
     },
 
     async resolve(applicationId: string, input: ResolveInstructorApplicationInput, reviewerId: string) {

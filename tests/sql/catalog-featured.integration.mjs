@@ -1,0 +1,38 @@
+import { readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { pathToFileURL, URL } from "node:url";
+import process from "node:process";
+import { log } from "node:console";
+const { PGlite } = await import(pathToFileURL(process.env.PGLITE_MODULE).href);
+const db = new PGlite();
+try {
+  await db.exec(`create role anon;create role authenticated;create role service_role;
+    create table usuarios(id_usuario uuid primary key,activo boolean default true);
+    create table estados_curso(id_estado_curso int primary key,nombre text,activo boolean default true);
+    create table cursos(id_curso uuid primary key,fk_estado_curso int,fecha_publicacion timestamptz default now(),fk_organizacion uuid,activo boolean default true);
+    create table cursos_instructores(fk_curso uuid,fk_usuario uuid,activo boolean default true,instructor_principal boolean default true);
+    create table estados_inscripcion(id_estado_inscripcion int primary key,nombre text,activo boolean default true);
+    create table inscripciones(fk_curso uuid,fk_estado_inscripcion int,activo boolean default true);
+    create view academix_managed_courses with(security_invoker=true) as select c.*,array[]::uuid[] as manageable_user_ids from cursos c;
+    insert into estados_curso values(1,'Publicado');insert into estados_inscripcion values(1,'Activa');
+    insert into usuarios values('11111111-1111-4111-8111-111111111111');
+    insert into cursos(id_curso,fk_estado_curso) select md5(n::text)::uuid,1 from generate_series(1,100) n;
+    insert into cursos_instructores(fk_curso,fk_usuario) select id_curso,'11111111-1111-4111-8111-111111111111' from cursos;
+    grant select on all tables in schema public to service_role;
+  `);
+  await assert.rejects(db.query("select visible_destacados from academix_managed_courses"), /does not exist/);
+  const sql = await readFile(new URL("../../supabase/migrations/20261109010000_catalog_cache.sql", import.meta.url), "utf8");
+  await db.exec(sql); await db.exec(sql);
+  assert.equal((await db.query("select visible_destacados from academix_managed_courses limit 1")).rows[0].visible_destacados, true);
+  await db.exec("set role service_role");
+  const first = (await db.query("select id_curso from academix_featured_course_ids(10000)")).rows;
+  assert.equal(first.length, 5);
+  await db.exec("reset role");
+  await db.query("update cursos set visible_destacados=false where id_curso=$1", [first[0].id_curso]);
+  await db.exec("set role service_role");
+  const second = (await db.query("select id_curso from academix_featured_course_ids(5)")).rows;
+  assert.equal(second.length, 5); assert.ok(!second.some((row) => row.id_curso === first[0].id_curso));
+  await db.exec("set role authenticated");
+  await assert.rejects(db.query("select * from academix_featured_course_ids(5)"), /permission denied/);
+  log(JSON.stringify({ passed: true, database: "isolated PGlite", courseRows: 100, responseRows: 5, preservedViewColumns: true }));
+} finally { await db.close(); }

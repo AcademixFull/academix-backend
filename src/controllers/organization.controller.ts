@@ -1,14 +1,17 @@
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../errors/app-error";
 import {
+  organizationMemberListQuerySchema,
+  organizationCourseListQuerySchema,
   createOrganizationSchema,
   joinOrganizationSchema,
   organizationIdentifierSchema,
   organizationMemberIdentifierSchema,
   updateOrganizationMemberSchema,
 } from "../schemas/organization.schemas";
+import { assignInstructorSchema, managedCourseIdentifierSchema } from "../schemas/administration.schemas";
 import { organizationService } from "../services/organization.service";
-import { successResponse } from "../utils/api-response";
+import { paginatedResponse, successResponse } from "../utils/api-response";
 
 function userId(req: Request): string {
   if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Debes iniciar sesión.");
@@ -28,6 +31,10 @@ function handler(action: (req: Request, res: Response) => Promise<void>) {
 export const listOrganizations = handler(async (req, res) => {
   res.json(successResponse(await organizationService.listForUser(userId(req))));
 });
+export const deleteOrganization = handler(async (req, res) => {
+  const { organizationId } = organizationIdentifierSchema.parse(req.params);
+  res.json(successResponse(await organizationService.remove(organizationId, userId(req))));
+});
 
 export const createOrganization = handler(async (req, res) => {
   const input = createOrganizationSchema.parse(req.body);
@@ -46,7 +53,8 @@ export const organizationDetail = handler(async (req, res) => {
 
 export const listOrganizationMembers = handler(async (req, res) => {
   const { organizationId } = organizationIdentifierSchema.parse(req.params);
-  res.json(successResponse(await organizationService.listMembers(organizationId, userId(req))));
+  const result = await organizationService.listMembers(organizationId, userId(req), organizationMemberListQuerySchema.parse(req.query));
+  res.json(paginatedResponse(result.items, result.pagination));
 });
 
 export const updateOrganizationMember = handler(async (req, res) => {
@@ -57,5 +65,14 @@ export const updateOrganizationMember = handler(async (req, res) => {
 
 export const listOrganizationCourses = handler(async (req, res) => {
   const { organizationId } = organizationIdentifierSchema.parse(req.params);
-  res.json(successResponse(await organizationService.listCourses(organizationId, userId(req))));
+  const result = await organizationService.listCourses(organizationId, userId(req), organizationCourseListQuerySchema.parse(req.query));
+  res.json(paginatedResponse(result.items, result.pagination));
+});
+
+export const assignOrganizationInstructor = handler(async (req, res) => {
+  const { organizationId } = organizationIdentifierSchema.parse(req.params);
+  const { courseId } = managedCourseIdentifierSchema.parse(req.params);
+  const { instructorId } = assignInstructorSchema.parse(req.body);
+  await organizationService.assignInstructor(organizationId, courseId, instructorId, userId(req));
+  res.json(successResponse({ assigned: true }));
 });

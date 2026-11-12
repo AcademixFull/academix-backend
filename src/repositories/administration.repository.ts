@@ -1,3 +1,4 @@
+import type { ListQuery } from "../schemas/pagination.schemas";
 import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../errors/app-error";
 import type {
@@ -24,18 +25,12 @@ interface UserRow {
   apellido_materno: string | null;
   correo: string;
   activo: boolean;
+  institutional_organizations?: Array<{ id: string; name: string }>;
 }
 
 interface RoleAssignmentRow {
   fk_usuario: string;
   roles: { nombre: string } | null;
-}
-
-interface InstructorProfileRow {
-  fk_usuario: string;
-  especialidad: string;
-  anios_experiencia: number;
-  activo: boolean;
 }
 
 interface CourseRow {
@@ -56,6 +51,7 @@ interface CourseRow {
   cuota_recuperacion: number | string;
   permite_certificado: boolean;
   requiere_aprobacion: boolean;
+  visible_destacados: boolean;
   activo: boolean;
   fecha_publicacion: string | null;
   fecha_creacion: string;
@@ -79,10 +75,10 @@ export interface ManagedCategory {
 export interface AdministrationRepository {
   listUsers(input: UserListQuery): Promise<{ records: ManagedUser[]; total: number }>;
   setUserRoles(targetUserId: string, roleNames: string[], actorUserId: string): Promise<void>;
-  setUserActive(targetUserId: string, active: boolean): Promise<ManagedUser | null>;
+  setUserActive(targetUserId: string, active: boolean, actorUserId: string): Promise<ManagedUser | null>;
   hasAnotherActiveAdmin(targetUserId: string): Promise<boolean>;
   findUser(userId: string): Promise<ManagedUser | null>;
-  listInstructors(): Promise<ManagedInstructor[]>;
+  listInstructors(input: ListQuery): Promise<{ records: ManagedInstructor[]; total: number }>;
   upsertInstructor(
     targetUserId: string,
     specialty: string,
@@ -90,7 +86,7 @@ export interface AdministrationRepository {
     actorUserId: string
   ): Promise<void>;
   findInstructor(userId: string): Promise<ManagedInstructor | null>;
-  listCategories(): Promise<ManagedCategory[]>;
+  listCategories(input: ListQuery): Promise<{ records: ManagedCategory[]; total: number }>;
   createCategory(input: CreateCategoryInput & { slug: string }, actorUserId: string): Promise<ManagedCategory>;
   updateCategory(
     categoryId: number,
@@ -146,6 +142,7 @@ const COURSE_COLUMNS = [
   "cuota_recuperacion",
   "permite_certificado",
   "requiere_aprobacion",
+  "visible_destacados",
   "activo",
   "fecha_publicacion",
   "fecha_creacion",
@@ -215,7 +212,7 @@ function textList(value: string | null): string[] {
   if (!value) return [];
   return value
     .split(/\r?\n|;/)
-    .map((item) => item.trim().replace(/^[-•]\s*/, ""))
+    .map((item) => item.trim().replace(/^[-â€¢]\s*/, ""))
     .filter(Boolean);
 }
 
@@ -255,6 +252,8 @@ function mappedDatabaseError(error: { code?: string; message?: string }): AppErr
     ],
     AT_LEAST_ONE_ROLE_REQUIRED: [422, "ROLE_REQUIRED", "El usuario debe conservar al menos un rol."],
     INVALID_ROLE: [422, "INVALID_ROLE", "Uno de los roles no es válido."],
+    CANNOT_DEACTIVATE_SELF: [409, "CANNOT_DEACTIVATE_SELF", "No puedes desactivar tu propia cuenta administrativa."],
+    ACCOUNT_DELETION_IN_PROGRESS: [409, "ACCOUNT_DELETION_IN_PROGRESS", "La cuenta está en proceso de eliminación y no se puede reactivar."],
   };
   const mapped = error.message ? customErrors[error.message] : undefined;
   if (mapped) return new AppError(mapped[0], mapped[1], mapped[2]);
@@ -277,7 +276,7 @@ async function activeLookupId(
 
   if (error) throw mappedDatabaseError(error);
   if (!data) {
-    throw new AppError(422, "INVALID_COURSE_OPTION", "Una opción del curso no está disponible.");
+    throw new AppError(422, "INVALID_COURSE_OPTION", "Una opciÃƒÂ³n del curso no estÃƒ¡ disponible.");
   }
   return Number((data as unknown as Record<string, number>)[idColumn]);
 }
@@ -299,7 +298,7 @@ async function courseForeignKeys(input: {
       .eq("activo", true)
       .maybeSingle();
     if (error) throw mappedDatabaseError(error);
-    if (!data) throw new AppError(422, "INVALID_CATEGORY", "La categoría no está disponible.");
+    if (!data) throw new AppError(422, "INVALID_CATEGORY", "La categorÃƒÂ­a no estÃƒ¡ disponible.");
     result.fk_categoria = input.categoryId;
   }
 
@@ -469,6 +468,7 @@ async function hydrateCourses(rows: CourseRow[]): Promise<ManagedCourse[]> {
       price: Number(row.cuota_recuperacion),
       certificateEnabled: row.permite_certificado,
       requiresApproval: row.requiere_aprobacion,
+      featuredVisible: row.visible_destacados ?? true,
       organization: row.fk_organizacion
         ? { id: row.fk_organizacion, name: organizations.get(row.fk_organizacion) ?? "Organización" }
         : null,
@@ -495,42 +495,20 @@ function courseValues(input: CreateCourseInput | UpdateCourseInput) {
   if (input.price !== undefined) values.cuota_recuperacion = input.price;
   if (input.certificateEnabled !== undefined) values.permite_certificado = input.certificateEnabled;
   if (input.requiresApproval !== undefined) values.requiere_aprobacion = input.requiresApproval;
+  if (input.featuredVisible !== undefined) values.visible_destacados = input.featuredVisible;
   return values;
 }
 
 export const administrationRepository: AdministrationRepository = {
   async listUsers(input) {
-    let allowedUserIds: string[] | undefined;
-    if (input.role) {
-      const roleName = roleToDatabase[input.role];
-      const { data: role, error: roleError } = await supabaseAdmin
-        .from("roles")
-        .select("id_rol")
-        .eq("nombre", roleName)
-        .eq("activo", true)
-        .maybeSingle();
-      if (roleError) throw mappedDatabaseError(roleError);
-      if (!role) return { records: [], total: 0 };
-
-      const { data: assignments, error: assignmentError } = await supabaseAdmin
-        .from("usuarios_roles")
-        .select("fk_usuario")
-        .eq("fk_rol", (role as { id_rol: string }).id_rol)
-        .eq("activo", true);
-      if (assignmentError) throw mappedDatabaseError(assignmentError);
-      allowedUserIds = unique(
-        ((assignments ?? []) as Array<{ fk_usuario: string }>).map((row) => row.fk_usuario)
-      );
-      if (allowedUserIds.length === 0) return { records: [], total: 0 };
-    }
-
+    const sortColumn = { name: "nombres", email: "correo", createdAt: "fecha_creacion" }[input.sort ?? "createdAt"];
     let query = supabaseAdmin
-      .from("usuarios")
-      .select("id_usuario,nombres,apellido_paterno,apellido_materno,correo,activo", {
-        count: "exact",
-      })
-      .order("fecha_creacion", { ascending: false });
-    if (allowedUserIds) query = query.in("id_usuario", allowedUserIds);
+      .from("academix_admin_users")
+      .select("id_usuario,nombres,apellido_paterno,apellido_materno,correo,activo,institutional_organizations", { count: "exact" })
+      .order(sortColumn, { ascending: input.direction === "asc" }).order("id_usuario");
+    if (input.role === "institutional_administrator") query = query.eq("institutional_administrator", true);
+    else if (input.role) query = query.contains("role_names", [roleToDatabase[input.role]]);
+    if (input.active !== undefined) query = query.eq("activo", input.active);
     if (input.search) {
       const pattern = searchPattern(input.search);
       query = query.or(`nombres.ilike."${pattern}",correo.ilike."${pattern}"`);
@@ -548,6 +526,7 @@ export const administrationRepository: AdministrationRepository = {
         email: user.correo,
         active: user.activo,
         roles: roles.get(user.id_usuario) ?? [],
+        institutionalOrganizations: user.institutional_organizations ?? [],
       })),
       total: count ?? 0,
     };
@@ -563,12 +542,13 @@ export const administrationRepository: AdministrationRepository = {
   },
 
 
-  async setUserActive(targetUserId, active) {
+  async setUserActive(targetUserId, active, actorUserId) {
+    const { error: mutationError } = await supabaseAdmin.rpc("academix_set_user_active", { p_target_user: targetUserId, p_active: active, p_actor_user: actorUserId });
+    if (mutationError) throw mappedDatabaseError(mutationError);
     const { data, error } = await supabaseAdmin
       .from("usuarios")
-      .update({ activo: active, fecha_actualizacion: new Date().toISOString() })
-      .eq("id_usuario", targetUserId)
       .select("id_usuario,nombres,apellido_paterno,apellido_materno,correo,activo")
+      .eq("id_usuario", targetUserId)
       .maybeSingle();
     if (error) throw mappedDatabaseError(error);
     if (!data) return null;
@@ -623,40 +603,17 @@ export const administrationRepository: AdministrationRepository = {
     };
   },
 
-  async listInstructors() {
-    const { data, error } = await supabaseAdmin
-      .from("perfiles_instructores")
-      .select("fk_usuario,especialidad,anios_experiencia,activo")
-      .order("fecha_creacion");
+  async listInstructors(input) {
+    let query = supabaseAdmin.from("academix_admin_instructors").select("*", { count: "exact" }).order("nombres").order("fk_usuario");
+    if (input.active !== undefined) query = query.eq("activo", input.active);
+    if (input.search) {
+      const pattern = searchPattern(input.search);
+      query = query.or(`nombres.ilike."${pattern}",correo.ilike."${pattern}",especialidad.ilike."${pattern}"`);
+    }
+    const offset = (input.page - 1) * input.limit;
+    const { data, count, error } = await query.range(offset, offset + input.limit - 1);
     if (error) throw mappedDatabaseError(error);
-    const profiles = (data ?? []) as InstructorProfileRow[];
-    if (profiles.length === 0) return [];
-
-    const { data: usersData, error: usersError } = await supabaseAdmin
-      .from("usuarios")
-      .select("id_usuario,nombres,apellido_paterno,apellido_materno,correo,activo")
-      .in("id_usuario", profiles.map((profile) => profile.fk_usuario));
-    if (usersError) throw mappedDatabaseError(usersError);
-    const users = new Map(
-      ((usersData ?? []) as unknown as UserRow[]).map((user) => [user.id_usuario, user])
-    );
-    const roles = await rolesByUsers(profiles.map((profile) => profile.fk_usuario));
-    return profiles.flatMap((profile) => {
-      const user = users.get(profile.fk_usuario);
-      const activeRoles = roles.get(profile.fk_usuario) ?? [];
-      return user && activeRoles.includes("instructor") && !activeRoles.includes("moderator")
-        ? [
-            {
-              id: user.id_usuario,
-              fullName: fullName(user),
-              email: user.correo,
-              specialty: profile.especialidad,
-              experienceYears: profile.anios_experiencia,
-              active: profile.activo && user.activo,
-            },
-          ]
-        : [];
-    });
+    return { records: (data ?? []).map((row) => ({ id: String(row.fk_usuario), fullName: fullName(row as unknown as UserRow), email: String(row.correo), specialty: String(row.especialidad), experienceYears: Number(row.anios_experiencia), active: Boolean(row.activo) })), total: count ?? 0 };
   },
 
   async upsertInstructor(targetUserId, specialty, experienceYears, actorUserId) {
@@ -670,29 +627,20 @@ export const administrationRepository: AdministrationRepository = {
   },
 
   async findInstructor(userId) {
-    const instructors = await this.listInstructors();
-    return instructors.find((instructor) => instructor.id === userId) ?? null;
+    const { data, error } = await supabaseAdmin.from("academix_admin_instructors").select("*").eq("fk_usuario", userId).maybeSingle();
+    if (error) throw mappedDatabaseError(error);
+    if (!data) return null;
+    return { id: String(data.fk_usuario), fullName: fullName(data as unknown as UserRow), email: String(data.correo), specialty: String(data.especialidad), experienceYears: Number(data.anios_experiencia), active: Boolean(data.activo) };
   },
 
-  async listCategories() {
-    const { data, error } = await supabaseAdmin
-      .from("categorias")
-      .select("id_categoria,nombre,slug,descripcion,activo")
-      .order("nombre");
+  async listCategories(input) {
+    let query = supabaseAdmin.from("categorias").select("id_categoria,nombre,slug,descripcion,activo", { count: "exact" }).order("nombre").order("id_categoria");
+    if (input.active !== undefined) query = query.eq("activo", input.active);
+    if (input.search) query = query.ilike("nombre", searchPattern(input.search));
+    const offset = (input.page - 1) * input.limit;
+    const { data, count, error } = await query.range(offset, offset + input.limit - 1);
     if (error) throw mappedDatabaseError(error);
-    return ((data ?? []) as Array<{
-      id_categoria: number;
-      nombre: string;
-      slug: string;
-      descripcion: string | null;
-      activo: boolean;
-    }>).map((row) => ({
-      id: row.id_categoria,
-      name: row.nombre,
-      slug: row.slug,
-      description: row.descripcion ?? "",
-      active: row.activo,
-    }));
+    return { records: (data ?? []).map((row) => ({ id: Number(row.id_categoria), name: String(row.nombre), slug: String(row.slug), description: String(row.descripcion ?? ""), active: Boolean(row.activo) })), total: count ?? 0 };
   },
 
   async createCategory(input, actorUserId) {
@@ -796,25 +744,14 @@ export const administrationRepository: AdministrationRepository = {
   },
 
   async listCourses(input, instructorId) {
-    let courseIds: string[] | undefined;
-    if (instructorId) {
-      const { data: assignments, error: assignmentsError } = await supabaseAdmin
-        .from("cursos_instructores")
-        .select("fk_curso")
-        .eq("fk_usuario", instructorId)
-        .eq("activo", true);
-      if (assignmentsError) throw mappedDatabaseError(assignmentsError);
-      courseIds = unique(
-        ((assignments ?? []) as Array<{ fk_curso: string }>).map((row) => row.fk_curso)
-      );
-      if (courseIds.length === 0) return { records: [], total: 0 };
-    }
-
     let query = supabaseAdmin
-      .from("cursos")
+      .from("academix_managed_courses")
       .select(COURSE_COLUMNS, { count: "exact" })
-      .order("fecha_actualizacion", { ascending: false });
-    if (courseIds) query = query.in("id_curso", courseIds);
+      .order("fecha_actualizacion", { ascending: false }).order("id_curso");
+    if (instructorId) query = query.contains("manageable_user_ids", [instructorId]);
+    if (input.scope === "external") query = query.is("fk_organizacion", null);
+    if (input.scope === "institutional") query = query.not("fk_organizacion", "is", null);
+    if (input.organizationId) query = query.eq("fk_organizacion", input.organizationId);
     if (input.status) {
       const stateId = await activeLookupId(
         "estados_curso",

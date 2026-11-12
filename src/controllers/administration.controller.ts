@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { listQuerySchema } from "../schemas/pagination.schemas";
 import { AppError } from "../errors/app-error";
 import {
   assignInstructorSchema,
@@ -57,8 +58,9 @@ export const setUserStatus = handler(async (req, res) => {
   res.json(successResponse(await administrationService.setUserActive(userId, active, actor(req).id)));
 });
 
-export const listInstructors = handler(async (_req, res) => {
-  res.json(successResponse(await administrationService.listInstructors()));
+export const listInstructors = handler(async (req, res) => {
+  const result = await administrationService.listInstructors(listQuerySchema.parse(req.query));
+  res.json(paginatedResponse(result.items, result.pagination));
 });
 
 export const upsertInstructor = handler(async (req, res) => {
@@ -72,8 +74,9 @@ export const createCategory = handler(async (req, res) => {
   res.status(201).json(successResponse(await administrationService.createCategory(input, actor(req).id)));
 });
 
-export const listCategories = handler(async (_req, res) => {
-  res.json(successResponse(await administrationService.listCategories()));
+export const listCategories = handler(async (req, res) => {
+  const result = await administrationService.listCategories(listQuerySchema.parse(req.query));
+  res.json(paginatedResponse(result.items, result.pagination));
 });
 
 export const updateCategory = handler(async (req, res) => {

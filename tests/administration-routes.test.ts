@@ -73,9 +73,9 @@ describe("rutas administrativas e instructor", () => {
 
   it("lista categorías activas e inactivas para poder reactivarlas", async () => {
     vi.mocked(authService.verifyAccessToken).mockResolvedValue(admin);
-    vi.mocked(administrationService.listCategories).mockResolvedValue([
+    vi.mocked(administrationService.listCategories).mockResolvedValue({ items: [
       { id: 1, name: "Programación", slug: "programacion", description: "", active: false },
-    ]);
+    ], pagination: { page: 1, limit: 20, total: 1, totalPages: 1 } });
     const response = await request(app)
       .get("/api/v1/admin/categories")
       .set("Authorization", "Bearer token");

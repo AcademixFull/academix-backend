@@ -67,8 +67,13 @@ export function errorHandler(
 }
 
 function logUnexpectedError(error: unknown, req: Request): void {
+  // Provider failures may embed credentials in their message/stack. Authentication
+  // diagnostics keep request metadata only, even in development.
+  const authenticationRequest = /(?:^|\/)auth(?:\/|$)/.test(req.path) || /\/users\/me\/deletion\/?$/.test(req.path);
   const details =
-    error instanceof Error
+    authenticationRequest
+      ? { errorName: "AuthenticationError", errorMessage: "Authentication operation failed" }
+      : error instanceof Error
       ? { errorName: error.name, errorMessage: error.message }
       : { errorName: "UnknownError", errorMessage: "Non-Error value received" };
 
@@ -80,7 +85,7 @@ function logUnexpectedError(error: unknown, req: Request): void {
       method: req.method,
       path: req.path,
       ...details,
-      ...(!isProduction && error instanceof Error ? { stack: error.stack } : {}),
+      ...(!authenticationRequest && !isProduction && error instanceof Error ? { stack: error.stack } : {}),
     })
   );
 }

@@ -1,3 +1,5 @@
+import { env } from "../config/env";
+import { BoundedCache } from "../utils/bounded-cache";
 import { AppError } from "../errors/app-error";
 import {
   catalogRepository,
@@ -103,21 +105,12 @@ export function createCatalogService(
       if (!record) {
         throw new AppError(404, "COURSE_NOT_FOUND", "El curso solicitado no existe.");
       }
-      const [courseReviews, related] = await Promise.all([
+      const [courseReviews, related, reviewStats] = await Promise.all([
         reviews.listCourseReviews(record.id),
         repository.listRelatedCourses(record.id, record.categoryId),
+        reviews.statsByCourseIds([record.id]),
       ]);
-      const courseStats = courseReviews.length === 0
-        ? { rating: 0, reviewCount: 0 }
-        : {
-            rating:
-              Math.round(
-                (courseReviews.reduce((total, review) => total + review.rating, 0) /
-                  courseReviews.length) *
-                  10
-              ) / 10,
-            reviewCount: courseReviews.length,
-          };
+      const courseStats = reviewStats.get(record.id) ?? { rating: 0, reviewCount: 0 };
       const courseSummary = serializeCourseSummary(record, courseStats);
       if (!courseSummary) {
         throw new AppError(
@@ -175,7 +168,19 @@ export function createCatalogService(
       const records = await repository.listInstructorCourses(instructorId);
       return summaries(records);
     },
+    async listInstructorCoursesPage(instructorId: string, input: CourseListQuery) {
+      const result = await repository.listInstructorCoursePage(instructorId, input);
+      return { items: await summaries(result.records), pagination: { page: input.page, limit: input.limit, total: result.total, totalPages: Math.max(1, Math.ceil(result.total / input.limit)) } };
+    },
   };
 }
 
-export const catalogService = createCatalogService(catalogRepository, reviewService);
+const uncachedCatalog = createCatalogService(catalogRepository, reviewService);
+const publicCache = new BoundedCache(env.CATALOG_CACHE_MAX_ITEMS, env.CATALOG_CACHE_TTL_MS);
+export const invalidatePublicCatalog = () => publicCache.clear();
+export const catalogService = {
+  ...uncachedCatalog,
+  listCategories: () => publicCache.get("categories", () => uncachedCatalog.listCategories()),
+  listFeaturedCourses: () => publicCache.get("featured", () => uncachedCatalog.listFeaturedCourses()),
+  listCourses: (input: CourseListQuery) => publicCache.get(`courses:${JSON.stringify(input)}`, () => uncachedCatalog.listCourses(input)),
+};

@@ -5,7 +5,8 @@ import {
   credentialCodeSchema,
 } from "../schemas/certificate.schemas";
 import { certificateService } from "../services/certificate.service";
-import { successResponse } from "../utils/api-response";
+import { successResponse, paginatedResponse } from "../utils/api-response";
+import { libraryListQuerySchema } from "../schemas/student.schemas";
 
 function userId(req: Request): string {
   if (!req.auth) throw new AppError(401, "AUTH_REQUIRED", "Debes iniciar sesión.");
@@ -14,7 +15,8 @@ function userId(req: Request): string {
 
 export async function listMyCertificates(req: Request, res: Response, next: NextFunction) {
   try {
-    res.json(successResponse(await certificateService.listMyCertificates(userId(req))));
+    const result = await certificateService.listMyCertificatesPage(userId(req), libraryListQuerySchema.pick({ page: true, limit: true }).parse(req.query));
+    res.json(paginatedResponse(result.items, result.pagination));
   } catch (error) {
     next(error);
   }

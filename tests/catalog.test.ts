@@ -11,6 +11,7 @@ vi.mock("../src/services/catalog.service", () => ({
     listRelatedCourses: vi.fn(),
     getInstructor: vi.fn(),
     listInstructorCourses: vi.fn(),
+    listInstructorCoursesPage: vi.fn(),
   },
 }));
 
@@ -143,7 +144,7 @@ describe("catálogo público", () => {
   });
 
   it("lista los cursos publicados de un instructor", async () => {
-    vi.mocked(catalogService.listInstructorCourses).mockResolvedValue([course]);
+    vi.mocked(catalogService.listInstructorCoursesPage).mockResolvedValue({ items: [course], pagination: { page: 1, limit: 10, total: 1, totalPages: 1 } });
 
     const response = await request(app).get(`/api/v1/instructors/${instructorId}/courses`);
 
@@ -160,4 +161,13 @@ describe("catálogo público", () => {
     expect(catalogService.listFeaturedCourses).toHaveBeenCalledOnce();
   });
 
+});
+
+
+it("paginates the public instructor courses in the database contract", async () => {
+  vi.mocked(catalogService.listInstructorCoursesPage).mockResolvedValue({ items: [], pagination: { page: 2, limit: 10, total: 30, totalPages: 3 } });
+  const result = await request(createApp()).get(`/api/v1/instructors/${instructorId}/courses?page=2&limit=10`);
+  expect(result.status).toBe(200);
+  expect(result.body.pagination.total).toBe(30);
+  expect(catalogService.listInstructorCoursesPage).toHaveBeenCalledWith(instructorId, { page: 2, limit: 10 });
 });

@@ -47,7 +47,7 @@ function requireEntity<T>(value: T | null, code: string, message: string): T {
   return value;
 }
 
-export function createAuthoringService(repository: AuthoringRepository) {
+export function createAuthoringService(repository: AuthoringRepository, scopedOrganizations: Pick<typeof organizationService, "canInstructorCreateCourse"> = organizationService) {
   async function assertEditable(courseId: string, actorId: string, actorRole: AppRole) {
     if (actorRole === "moderator") {
       throw new AppError(403, "MODERATOR_READ_ONLY", "El rol Moderador solo puede revisar contenido desde el panel de moderación.");
@@ -60,9 +60,10 @@ export function createAuthoringService(repository: AuthoringRepository) {
     if (access.status === "archived") {
       throw new AppError(409, "COURSE_CONTENT_IMMUTABLE", "Un curso dado de baja no se puede modificar.");
     }
+    let institutionalAdministrator = false;
     if (actorRole !== "admin") {
       if (access.organizationId) {
-        await organizationService.canInstructorCreateCourse(access.organizationId, actorId);
+        institutionalAdministrator = await scopedOrganizations.canInstructorCreateCourse(access.organizationId, actorId) === "administrator";
       } else if (actorRole !== "instructor") {
         throw new AppError(
           403,
@@ -71,7 +72,7 @@ export function createAuthoringService(repository: AuthoringRepository) {
         );
       }
     }
-    if (actorRole !== "admin" && !access.assigned) {
+    if (actorRole !== "admin" && !institutionalAdministrator && !access.assigned) {
       throw new AppError(403, "COURSE_NOT_ASSIGNED", "Solo puedes modificar cursos asignados.");
     }
     if (actorRole !== "admin" && access.status === "review") {

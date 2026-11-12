@@ -19,6 +19,7 @@ const certificate = {
 function repository(overrides: Partial<CertificateRepository> = {}): CertificateRepository {
   return {
     listByUser: vi.fn().mockResolvedValue([]),
+    listPageByUser: vi.fn().mockResolvedValue({ records: [], total: 0 }),
     findForUser: vi.fn().mockResolvedValue(null),
     findByCredentialCode: vi.fn().mockResolvedValue(null),
     isSignatureValid: vi.fn().mockResolvedValue(true),

@@ -1,3 +1,4 @@
+import { invalidateCatalogOnMutation } from "./middleware/catalog-cache";
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
@@ -38,7 +39,7 @@ export function createApp(): Express {
   app.use("/api/v1", apiRateLimiter);
 
   // Todas las rutas de la API viven bajo /api/v1.
-  app.use("/api/v1", apiRoutes);
+  app.use("/api/v1", invalidateCatalogOnMutation, apiRoutes);
 
   // Cualquier ruta que no haya sido manejada arriba.
   app.use(notFound);

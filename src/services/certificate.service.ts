@@ -1,4 +1,5 @@
 import { AppError } from "../errors/app-error";
+import { pageResult } from "../utils/pagination";
 import {
   certificateRepository,
   type CertificateRepository,
@@ -37,6 +38,10 @@ async function assertIntegrity(
 
 export function createCertificateService(repository: CertificateRepository) {
   return {
+    async listMyCertificatesPage(userId: string, input: { page: number; limit: number }) {
+      const result = await repository.listPageByUser(userId, input);
+      return pageResult(result.records.map(summary), result.total, input.page, input.limit);
+    },
     async listMyCertificates(userId: string): Promise<CertificateSummary[]> {
       return (await repository.listByUser(userId)).map(summary);
     },

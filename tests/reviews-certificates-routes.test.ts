@@ -23,6 +23,7 @@ vi.mock("../src/services/review.service", () => ({
 vi.mock("../src/services/certificate.service", () => ({
   certificateService: {
     listMyCertificates: vi.fn(),
+    listMyCertificatesPage: vi.fn(),
     getMyCertificate: vi.fn(),
     verifyCertificate: vi.fn(),
   },
@@ -135,7 +136,7 @@ describe("rutas de reseñas y certificados", () => {
 
   it("lista los certificados del usuario autenticado", async () => {
     vi.mocked(authService.verifyAccessToken).mockResolvedValue(student);
-    vi.mocked(certificateService.listMyCertificates).mockResolvedValue([]);
+    vi.mocked(certificateService.listMyCertificatesPage).mockResolvedValue({ items: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 1 } });
     const response = await request(app)
       .get("/api/v1/users/me/certificates")
       .set("Authorization", "Bearer token");

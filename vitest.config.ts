@@ -18,7 +18,7 @@ export default defineConfig({
       RATE_LIMIT_WINDOW_MS: "900000",
       RATE_LIMIT_MAX: "1000",
       AUTH_RATE_LIMIT_MAX: "1000",
-      FRONTEND_URL: "http://localhost:5173",
+      FRONTEND_URL: "http://localhost:5173,http://localhost:4173",
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
       SUPABASE_SECRET_KEY: "sb_secret_test",

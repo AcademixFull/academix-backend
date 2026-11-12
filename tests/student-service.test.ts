@@ -9,6 +9,11 @@ import type {
   StudentRepository,
 } from "../src/repositories/student.repository";
 import { createStudentService } from "../src/services/student.service";
+import { AppError } from "../src/errors/app-error";
+import { organizationService } from "../src/services/organization.service";
+vi.mock("../src/services/organization.service", () => ({ organizationService: { canInstructorCreateCourse: vi.fn().mockResolvedValue("instructor") } }));
+import { getCourseAccessExpiry } from "../src/services/course-access.service";
+vi.mock("../src/services/course-access.service", () => ({ assertCourseLearningAccess: vi.fn().mockResolvedValue(undefined), getCourseAccessExpiry: vi.fn().mockResolvedValue(null) }));
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const courseId = "22222222-2222-4222-8222-222222222222";
@@ -44,10 +49,13 @@ const course: CatalogCourseRecord = {
 
 function studentRepository(overrides: Partial<StudentRepository> = {}): StudentRepository {
   return {
+    checkout: vi.fn().mockResolvedValue({ id: "receipt", mode: "simulated", currency: "MXN", total: 125, items: [{ courseId, enrollmentId: enrollment.id, amount: 125, alreadyOwned: false }] }),
     enroll: vi.fn().mockResolvedValue(enrollment.id),
     courseOrganizationId: vi.fn().mockResolvedValue(null),
     isActiveOrganizationMember: vi.fn().mockResolvedValue(false),
     listEnrollments: vi.fn().mockResolvedValue([]),
+    listEnrollmentPage: vi.fn().mockResolvedValue({ records: [], total: 0 }),
+    courseOwnership: vi.fn().mockResolvedValue([]),
     findEnrollment: vi.fn().mockResolvedValue(enrollment),
     listLearningModules: vi.fn().mockResolvedValue([]),
     completedLessonIds: vi.fn().mockResolvedValue([]),
@@ -80,8 +88,23 @@ function catalogRepository(overrides: Partial<CatalogRepository> = {}): CatalogR
 }
 
 describe("servicio del estudiante", () => {
+  it("conserva el progreso y evita repetir la inscripción de un curso completado", async () => {
+    const repository = studentRepository({ findEnrollment: vi.fn().mockResolvedValue({ ...enrollment, databaseStatus: "Finalizada", completedLessons: 2 }) });
+    const result = await createStudentService(repository, catalogRepository()).enroll(userId, courseId);
+    expect(result.status).toBe("completed");
+    expect(repository.enroll).not.toHaveBeenCalled();
+  });
+
+  it("devuelve la confirmación del servidor y su biblioteca sin confiar en precios del cliente", async () => {
+    const repository = studentRepository({ listEnrollments: vi.fn().mockResolvedValue([enrollment]) });
+    const result = await createStudentService(repository, catalogRepository()).checkout(userId, {
+      courseIds: [courseId], idempotencyKey: "66666666-6666-4666-8666-666666666666",
+    });
+    expect(result).toMatchObject({ mode: "simulated", total: 125, enrollments: [{ id: enrollment.id, course: { id: courseId } }] });
+  });
+
   it("crea una inscripción con el contrato exacto del frontend", async () => {
-    const repository = studentRepository();
+    const repository = studentRepository({ findEnrollment: vi.fn().mockResolvedValueOnce(null).mockResolvedValue(enrollment) });
     const service = createStudentService(repository, catalogRepository());
 
     const result = await service.enroll(userId, courseId);
@@ -117,6 +140,7 @@ describe("servicio del estudiante", () => {
     const repository = studentRepository({
       courseOrganizationId: vi.fn().mockResolvedValue(organizationId),
       isActiveOrganizationMember: vi.fn().mockResolvedValue(true),
+      findEnrollment: vi.fn().mockResolvedValueOnce(null).mockResolvedValue(enrollment),
     });
     const service = createStudentService(repository, catalogRepository());
 
@@ -309,4 +333,21 @@ describe("servicio del estudiante", () => {
     ).rejects.toMatchObject({ status: 416, code: "INVALID_RANGE" });
     expect(repository.openStorageObject).not.toHaveBeenCalled();
   });
+});
+
+
+it("revalidates subscription access before returning lesson content", async () => {
+  const repository = studentRepository();
+  vi.mocked(getCourseAccessExpiry).mockRejectedValueOnce(new Error("Expired subscription"));
+  await expect(createStudentService(repository, catalogRepository()).getLearningCourse(userId, courseId)).rejects.toThrow("Expired subscription");
+  expect(repository.listLearningModules).not.toHaveBeenCalled();
+});
+
+
+it("does not let an assigned instructor bypass an expired institutional plan for files", async () => {
+  const repository = studentRepository({ courseOrganizationId: vi.fn().mockResolvedValue("institution"), isInstructorAssigned: vi.fn().mockResolvedValue(true),
+    findProtectedResource: vi.fn().mockResolvedValue({ courseId, storagePath: "courses/file.pdf", originalName: "file.pdf", mimeType: "application/pdf", sizeBytes: 100 }) });
+  vi.mocked(organizationService.canInstructorCreateCourse).mockRejectedValueOnce(new AppError(403, "ORGANIZATION_SUBSCRIPTION_REQUIRED", "Plan vencido"));
+  await expect(createStudentService(repository, catalogRepository()).getResourceContent(userId, "instructor", lessonId, "file-id")).rejects.toMatchObject({ code: "ORGANIZATION_SUBSCRIPTION_REQUIRED" });
+  expect(repository.openStorageObject).not.toHaveBeenCalled();
 });

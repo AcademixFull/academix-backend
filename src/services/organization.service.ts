@@ -1,3 +1,5 @@
+import { organizationMemberListQuerySchema, organizationCourseListQuerySchema, type OrganizationMemberListQuery, type OrganizationCourseListQuery } from "../schemas/organization.schemas";
+import { pageResult } from "../utils/pagination";
 import { AppError } from "../errors/app-error";
 import {
   organizationRepository,
@@ -34,6 +36,11 @@ export function createOrganizationService(repository: OrganizationRepository) {
   }
 
   return {
+    async remove(organizationId: string, userId: string) {
+      // The locked database operation owns the complete permission check and replay.
+      await repository.remove(organizationId, userId);
+      return { deleted: true };
+    },
     listForUser(userId: string) {
       return repository.listForUser(userId);
     },
@@ -59,9 +66,10 @@ export function createOrganizationService(repository: OrganizationRepository) {
       return organization;
     },
 
-    async listMembers(organizationId: string, userId: string) {
+    async listMembers(organizationId: string, userId: string, input: OrganizationMemberListQuery = organizationMemberListQuerySchema.parse({})) {
       await requireAdministrator(organizationId, userId);
-      return repository.listMembers(organizationId);
+      const result = await repository.listMembers(organizationId, input);
+      return pageResult(result.records, result.total, input.page, input.limit);
     },
 
     async setMemberRole(
@@ -79,13 +87,24 @@ export function createOrganizationService(repository: OrganizationRepository) {
           throw new AppError(409, "LAST_ORGANIZATION_ADMIN", "La organización debe conservar al menos un administrador.");
         }
       }
-      await repository.setMemberRole(organizationId, targetUserId, input.role);
-      return (await repository.listMembers(organizationId)).find((member) => member.userId === targetUserId) ?? null;
+      await repository.setMemberRole(organizationId, targetUserId, input.role, actorId);
+      return (await repository.listMembers(organizationId, { page: 1, limit: 1, userId: targetUserId })).records[0] ?? null;
     },
 
-    async listCourses(organizationId: string, userId: string) {
+    async listCourses(organizationId: string, userId: string, input: OrganizationCourseListQuery = organizationCourseListQuerySchema.parse({})) {
       await requireMember(organizationId, userId);
-      return repository.listCourses(organizationId);
+      const result = await repository.listCourses(organizationId, input);
+      return pageResult(result.records, result.total, input.page, input.limit);
+    },
+
+    async assignInstructor(organizationId: string, courseId: string, instructorId: string, actorId: string) {
+      await requireAdministrator(organizationId, actorId);
+      await repository.assertPaid(organizationId);
+      const target = await requireMember(organizationId, instructorId);
+      if (!["administrator", "instructor"].includes(organizationRoleNames.roleFromDatabase(target.rol))) {
+        throw new AppError(403, "ORGANIZATION_INSTRUCTOR_REQUIRED", "Selecciona un instructor de esta institución.");
+      }
+      await repository.assignInstructor(organizationId, courseId, instructorId, actorId);
     },
 
     async canInstructorCreateCourse(organizationId: string, userId: string) {
@@ -94,7 +113,8 @@ export function createOrganizationService(repository: OrganizationRepository) {
       if (role !== "administrator" && role !== "instructor") {
         throw new AppError(403, "ORGANIZATION_INSTRUCTOR_REQUIRED", "Tu rol en la organización no permite crear cursos.");
       }
-      return true;
+      await repository.assertPaid(organizationId);
+      return role;
     },
   };
 }

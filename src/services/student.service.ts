@@ -11,6 +11,11 @@ import {
 import { serializeCourseSummary } from "./catalog.service";
 import type { EnrollmentSummary, LearningCourse } from "../types/student.types";
 import type { AppRole } from "../types/administration.types";
+import type { CheckoutInput, CheckoutResult } from "../types/checkout.types";
+import type { LibraryListQuery } from "../schemas/student.schemas";
+import { organizationService } from "./organization.service";
+import { pageResult } from "../utils/pagination";
+import { assertCourseLearningAccess, getCourseAccessExpiry } from "./course-access.service";
 
 function normalized(value: string): string {
   return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
@@ -87,6 +92,17 @@ export function createStudentService(
   }
 
   return {
+    learningSummary(userId: string) { return repository.learningSummary(userId); },
+    courseOwnership(userId: string, courseIds: string[]) { return repository.courseOwnership(userId, courseIds); },
+    async checkout(userId: string, input: CheckoutInput): Promise<CheckoutResult> {
+      // Price, ownership, authorization and all enrollments are committed in one RPC.
+      const receipt = await repository.checkout(userId, input);
+      const enrollments = await Promise.all(receipt.items.map((item) => repository.findEnrollment(userId, item.courseId)));
+      return {
+        ...receipt,
+        enrollments: await Promise.all(enrollments.filter((item): item is StudentEnrollmentRecord => Boolean(item && hasLearningAccess(item))).map(enrollmentSummary)),
+      };
+    },
     async enroll(userId: string, courseId: string): Promise<EnrollmentSummary> {
       const organizationId = await repository.courseOrganizationId(courseId);
       if (
@@ -99,7 +115,20 @@ export function createStudentService(
           "Este curso está incluido en el plan de una organización y solo sus miembros activos pueden inscribirse."
         );
       }
-      await repository.enroll(userId, courseId);
+      const existing = await repository.findEnrollment(userId, courseId);
+      if (existing && hasLearningAccess(existing)) {
+        await assertCourseLearningAccess(userId, courseId);
+        return enrollmentSummary(existing);
+      }
+      try {
+        await repository.enroll(userId, courseId);
+      } catch (error) {
+        // A concurrent successful enrollment is also a successful retry.
+        if (!(error instanceof AppError) || error.code !== "ENROLLMENT_ALREADY_EXISTS") throw error;
+        const concurrent = await repository.findEnrollment(userId, courseId);
+        if (concurrent && hasLearningAccess(concurrent)) return enrollmentSummary(concurrent);
+        throw error;
+      }
       const enrollment = await repository.findEnrollment(userId, courseId);
       if (!enrollment) {
         throw new AppError(502, "ENROLLMENT_NOT_AVAILABLE", "No fue posible consultar la inscripción.");
@@ -107,8 +136,19 @@ export function createStudentService(
       return enrollmentSummary(enrollment);
     },
 
+    async listMyCoursesPage(userId: string, input: LibraryListQuery) {
+      const result = await repository.listEnrollmentPage(userId, input);
+      const items = await this.serializeEnrollments(result.records);
+      const access = result.records.length ? new Set(await repository.courseOwnership(userId, result.records.map((item) => item.courseId))) : new Set<string>();
+      for (const item of items) item.accessActive = access.has(item.course.id);
+      return pageResult(items, result.total, input.page, input.limit);
+    },
+
     async listMyCourses(userId: string): Promise<EnrollmentSummary[]> {
-      const enrollments = await repository.listEnrollments(userId);
+      return this.serializeEnrollments(await repository.listEnrollments(userId));
+    },
+
+    async serializeEnrollments(enrollments: StudentEnrollmentRecord[]): Promise<EnrollmentSummary[]> {
       if (enrollments.length === 0) return [];
       const records = await courses.listCoursesByIds(
         enrollments.map((enrollment) => enrollment.courseId)
@@ -149,6 +189,8 @@ export function createStudentService(
         throw new AppError(403, "ENROLLMENT_NOT_ACTIVE", "La inscripción todavía no permite acceder al aula.");
       }
 
+      const accessExpiresAt = await getCourseAccessExpiry(userId, courseId);
+
       const [courseRecord, modules, completedIds] = await Promise.all([
         courses.findCourse(courseId),
         repository.listLearningModules(courseId),
@@ -167,6 +209,7 @@ export function createStudentService(
 
       return {
         id: courseRecord.id,
+        accessExpiresAt,
         title: courseRecord.title,
         instructorName: courseRecord.instructor.fullName,
         progressPercentage: percentage(completedLessons, totalLessons),
@@ -205,15 +248,25 @@ export function createStudentService(
           "El recurso solicitado no existe o no contiene un archivo."
         );
       }
-      const allowed =
-        actorRole === "admin" ||
-        actorRole === "moderator" ||
-        (actorRole === "instructor" &&
-          (await repository.isInstructorAssigned(userId, file.courseId))) ||
-        (await repository.hasCourseAccess(userId, file.courseId));
+      let staffAllowed = actorRole === "admin" || actorRole === "moderator";
+      if (!staffAllowed) {
+        const organizationId = await repository.courseOrganizationId(file.courseId);
+        if (organizationId) {
+          try {
+            await organizationService.canInstructorCreateCourse(organizationId, userId);
+            staffAllowed = true;
+          } catch (error) {
+            if (!(error instanceof AppError) || !["ORGANIZATION_INSTRUCTOR_REQUIRED", "ORGANIZATION_ACCESS_DENIED"].includes(error.code)) throw error;
+          }
+        } else if (actorRole === "instructor") {
+          staffAllowed = await repository.isInstructorAssigned(userId, file.courseId);
+        }
+      }
+      const allowed = staffAllowed || (await repository.hasCourseAccess(userId, file.courseId));
       if (!allowed) {
         throw new AppError(403, "RESOURCE_ACCESS_DENIED", "No tienes acceso a este recurso.");
       }
+      if (!staffAllowed) await assertCourseLearningAccess(userId, file.courseId);
       const range = normalizeByteRange(rangeHeader, file.sizeBytes);
       return {
         ...file,

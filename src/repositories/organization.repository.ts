@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../errors/app-error";
+import { subscriptionFailure } from "./subscription.repository";
+import type { OrganizationMemberListQuery, OrganizationCourseListQuery } from "../schemas/organization.schemas";
 import type { CreateOrganizationInput } from "../schemas/organization.schemas";
 import type {
   OrganizationCourseSummary,
@@ -27,6 +29,16 @@ interface OrganizationRow {
   codigo_union: string;
   activa: boolean;
   fecha_creacion: string;
+  creada_por: string | null;
+  fk_usuario: string;
+  matricula: string | null;
+  rol: string;
+  activo: boolean;
+  fecha_union: string;
+  member_count: number;
+  paid_active: boolean;
+  subscription_start: string | null;
+  subscription_end: string | null;
 }
 
 interface MemberUserRow {
@@ -94,6 +106,11 @@ function fullName(user: MemberUserRow): string {
 
 function databaseError(error?: { code?: string; message?: string }): AppError {
   const custom: Record<string, [number, string, string]> = {
+    ORGANIZATION_ADMIN_REQUIRED: [403, "ORGANIZATION_ADMIN_REQUIRED", "Se requiere administrar esta organización."],
+    LAST_ORGANIZATION_ADMIN: [409, "LAST_ORGANIZATION_ADMIN", "La organización debe conservar al menos un administrador."],
+    COURSE_NOT_FOUND: [404, "COURSE_NOT_FOUND", "El curso no pertenece a esta organización o no está disponible."],
+    ORGANIZATION_INSTRUCTOR_REQUIRED: [403, "ORGANIZATION_INSTRUCTOR_REQUIRED", "Selecciona un instructor activo de esta institución."],
+    MEMBER_NOT_FOUND: [404, "MEMBER_NOT_FOUND", "El miembro no existe en esta organización."],
     USER_NOT_FOUND: [404, "USER_NOT_FOUND", "El usuario solicitado no existe."],
     ORGANIZATION_NOT_FOUND: [404, "ORGANIZATION_NOT_FOUND", "La organización no existe."],
     ORGANIZATION_ALREADY_MEMBER: [409, "ORGANIZATION_ALREADY_MEMBER", "Ya perteneces a esta organización."],
@@ -109,71 +126,55 @@ function databaseError(error?: { code?: string; message?: string }): AppError {
 }
 
 export interface OrganizationRepository {
+  remove(organizationId: string, userId: string): Promise<void>;
+  assertPaid(organizationId: string): Promise<void>;
   listForUser(userId: string): Promise<OrganizationSummary[]>;
   create(input: CreateOrganizationInput & { slug: string }, userId: string): Promise<string>;
   join(userId: string, joinCode: string, studentNumber: string): Promise<string>;
   findMembership(organizationId: string, userId: string): Promise<MembershipRow | null>;
-  listMembers(organizationId: string): Promise<OrganizationMember[]>;
-  setMemberRole(organizationId: string, userId: string, role: OrganizationRole): Promise<void>;
+  listMembers(organizationId: string, input: OrganizationMemberListQuery & { userId?: string }): Promise<{ records: OrganizationMember[]; total: number }>;
+  setMemberRole(organizationId: string, userId: string, role: OrganizationRole, actorId: string): Promise<void>;
   countAdministrators(organizationId: string): Promise<number>;
-  listCourses(organizationId: string): Promise<OrganizationCourseSummary[]>;
-}
-
-async function organizationsByIds(ids: string[]): Promise<Map<string, OrganizationRow>> {
-  if (ids.length === 0) return new Map();
-  const { data, error } = await supabaseAdmin
-    .from("organizaciones")
-    .select("id_organizacion,nombre,slug,descripcion,tipo,codigo_union,activa,fecha_creacion")
-    .in("id_organizacion", ids)
-    .eq("activa", true);
-  if (error) throw databaseError(error);
-  return new Map(
-    ((data ?? []) as OrganizationRow[]).map((organization) => [organization.id_organizacion, organization])
-  );
+  assignInstructor(organizationId: string, courseId: string, instructorId: string, actorId: string): Promise<void>;
+  listCourses(organizationId: string, input: OrganizationCourseListQuery): Promise<{ records: OrganizationCourseSummary[]; total: number }>;
 }
 
 export const organizationRepository: OrganizationRepository = {
+  async remove(organizationId, userId) {
+    const { error } = await supabaseAdmin.rpc("academix_delete_organization", { p_organization_id: organizationId, p_actor_user: userId });
+    if (error) throw subscriptionFailure(error);
+  },
+  async assertPaid(organizationId) {
+    const { data, error } = await supabaseAdmin.rpc("academix_organization_has_subscription", { p_organization_id: organizationId });
+    if (error) throw subscriptionFailure(error);
+    if (!data) throw subscriptionFailure({ message: "ORGANIZATION_SUBSCRIPTION_REQUIRED" });
+  },
   async listForUser(userId) {
-    const { data: membershipsData, error: membershipsError } = await supabaseAdmin
-      .from("miembros_organizacion")
-      .select("fk_organizacion,fk_usuario,matricula,rol,activo,fecha_union")
+    const { data, error } = await supabaseAdmin
+      .from("academix_organization_access")
+      .select("*")
       .eq("fk_usuario", userId)
-      .eq("activo", true)
       .order("fecha_union", { ascending: true });
-    if (membershipsError) throw databaseError(membershipsError);
-    const memberships = (membershipsData ?? []) as MembershipRow[];
-    if (memberships.length === 0) return [];
-
-    const organizationIds = memberships.map((membership) => membership.fk_organizacion);
-    const [organizations, countsResult] = await Promise.all([
-      organizationsByIds(organizationIds),
-      supabaseAdmin
-        .from("miembros_organizacion")
-        .select("fk_organizacion")
-        .in("fk_organizacion", organizationIds)
-        .eq("activo", true),
-    ]);
-    if (countsResult.error) throw databaseError(countsResult.error);
-    const counts = new Map<string, number>();
-    for (const row of (countsResult.data ?? []) as Array<{ fk_organizacion: string }>) {
-      counts.set(row.fk_organizacion, (counts.get(row.fk_organizacion) ?? 0) + 1);
-    }
-
-    return memberships.flatMap((membership) => {
-      const organization = organizations.get(membership.fk_organizacion);
-      if (!organization) return [];
-      const role = roleFromDatabase(membership.rol);
-      return [{
+    if (error) throw databaseError(error);
+    return ((data ?? []) as OrganizationRow[]).map((organization) => {
+      const role = roleFromDatabase(organization.rol);
+      const isOwner = organization.creada_por === userId;
+      return {
         id: organization.id_organizacion,
         name: organization.nombre,
         slug: organization.slug,
         description: organization.descripcion ?? "",
         type: typeFromDatabase(organization.tipo),
         role,
-        memberCount: counts.get(organization.id_organizacion) ?? 0,
+        memberCount: organization.member_count,
         joinCode: role === "administrator" ? organization.codigo_union : null,
         createdAt: organization.fecha_creacion,
-      }];
+        ownerId: organization.creada_por ?? undefined,
+        isOwner,
+        active: organization.activa,
+        subscription: { active: organization.paid_active, startsAt: organization.subscription_start, endsAt: organization.subscription_end },
+        capabilities: { canDelete: isOwner && role === "administrator", canManageMembers: role === "administrator" && organization.activa, canManageCourses: organization.paid_active && role !== "student", canLearn: organization.paid_active },
+      };
     });
   },
 
@@ -213,50 +214,30 @@ export const organizationRepository: OrganizationRepository = {
     return (data as MembershipRow | null) ?? null;
   },
 
-  async listMembers(organizationId) {
-    const { data: membershipsData, error: membershipsError } = await supabaseAdmin
-      .from("miembros_organizacion")
-      .select("fk_organizacion,fk_usuario,matricula,rol,activo,fecha_union")
-      .eq("fk_organizacion", organizationId)
-      .order("fecha_union", { ascending: true });
-    if (membershipsError) throw databaseError(membershipsError);
-    const memberships = (membershipsData ?? []) as MembershipRow[];
-    if (memberships.length === 0) return [];
-
-    const { data: usersData, error: usersError } = await supabaseAdmin
-      .from("usuarios")
-      .select("id_usuario,nombres,apellido_paterno,apellido_materno,correo")
-      .in("id_usuario", memberships.map((membership) => membership.fk_usuario));
-    if (usersError) throw databaseError(usersError);
-    const users = new Map(
-      ((usersData ?? []) as MemberUserRow[]).map((user) => [user.id_usuario, user])
-    );
-    return memberships.flatMap((membership) => {
-      const user = users.get(membership.fk_usuario);
-      if (!user) return [];
-      return [{
-        userId: user.id_usuario,
-        fullName: fullName(user),
-        email: user.correo,
-        studentNumber: membership.matricula,
-        role: roleFromDatabase(membership.rol),
-        active: membership.activo,
-        joinedAt: membership.fecha_union,
-      }];
-    });
+  async listMembers(organizationId, input) {
+    const sortColumn = { name: "nombres", email: "correo", joinedAt: "fecha_union" }[input.sort ?? "joinedAt"];
+    let query = supabaseAdmin.from("academix_organization_members").select("*", { count: "exact" }).eq("fk_organizacion", organizationId).order(sortColumn, { ascending: input.direction !== "desc" }).order("fk_usuario");
+    if (input.role) query = query.eq("rol", roleToDatabase(input.role));
+    if (input.active !== undefined) query = query.eq("activo", input.active);
+    if (input.userId) query = query.eq("fk_usuario", input.userId);
+    if (input.search) {
+      const pattern = `%${input.search.replace(/[%_,()."\\]/g, " ")}%`;
+      query = query.or(`nombres.ilike."${pattern}",apellido_paterno.ilike."${pattern}",correo.ilike."${pattern}",matricula.ilike."${pattern}"`);
+    }
+    const offset = (input.page - 1) * input.limit;
+    const { data, error, count } = await query.range(offset, offset + input.limit - 1);
+    if (error) throw databaseError(error);
+    return { records: (data ?? []).map((row) => ({ userId: String(row.fk_usuario), fullName: fullName(row as unknown as MemberUserRow), email: String(row.correo), studentNumber: row.matricula ? String(row.matricula) : null, role: roleFromDatabase(String(row.rol)), active: Boolean(row.activo), joinedAt: String(row.fecha_union) })), total: count ?? 0 };
   },
 
-  async setMemberRole(organizationId, userId, role) {
-    const { data, error } = await supabaseAdmin
-      .from("miembros_organizacion")
-      .update({ rol: roleToDatabase(role), fecha_actualizacion: new Date().toISOString() })
-      .eq("fk_organizacion", organizationId)
-      .eq("fk_usuario", userId)
-      .eq("activo", true)
-      .select("id_miembro")
-      .maybeSingle();
+  async setMemberRole(organizationId, userId, role, actorId) {
+    const { error } = await supabaseAdmin.rpc("academix_set_organization_member_role", { p_organization_id: organizationId, p_target_user: userId, p_role: roleToDatabase(role), p_actor_user: actorId });
     if (error) throw databaseError(error);
-    if (!data) throw new AppError(404, "MEMBER_NOT_FOUND", "El miembro no existe en esta organización.");
+  },
+
+  async assignInstructor(organizationId, courseId, instructorId, actorId) {
+    const { error } = await supabaseAdmin.rpc("academix_assign_organization_instructor", { p_organization_id: organizationId, p_course_id: courseId, p_instructor_user: instructorId, p_actor_user: actorId });
+    if (error) throw databaseError(error);
   },
 
   async countAdministrators(organizationId) {
@@ -270,15 +251,25 @@ export const organizationRepository: OrganizationRepository = {
     return count ?? 0;
   },
 
-  async listCourses(organizationId) {
-    const { data, error } = await supabaseAdmin
+  async listCourses(organizationId, input) {
+    let query = supabaseAdmin
       .from("cursos")
-      .select("id_curso,titulo,activo,fecha_actualizacion,fk_estado_curso")
+      .select("id_curso,titulo,activo,fecha_actualizacion,fk_estado_curso", { count: "exact" })
       .eq("fk_organizacion", organizationId)
-      .order("fecha_actualizacion", { ascending: false });
+      .order("fecha_actualizacion", { ascending: false }).order("id_curso");
+    if (input.search) query = query.ilike("titulo", `%${input.search.replace(/[%_]/g, " ")}%`);
+    if (input.status) {
+      const names = { draft: "Borrador", review: "En revisión", published: "Publicado", archived: "Archivado", moderated: "Dado de baja por moderación" };
+      const { data: state, error: stateError } = await supabaseAdmin.from("estados_curso").select("id_estado_curso").eq("nombre", names[input.status]).maybeSingle();
+      if (stateError) throw databaseError(stateError);
+      if (!state) return { records: [], total: 0 };
+      query = query.eq("fk_estado_curso", state.id_estado_curso);
+    }
+    const offset = (input.page - 1) * input.limit;
+    const { data, error, count } = await query.range(offset, offset + input.limit - 1);
     if (error) throw databaseError(error);
     const courses = (data ?? []) as OrganizationCourseRow[];
-    if (courses.length === 0) return [];
+    if (courses.length === 0) return { records: [], total: count ?? 0 };
 
     const courseIds = courses.map((course) => course.id_curso);
     const stateIds = [...new Set(courses.map((course) => course.fk_estado_curso))];
@@ -310,7 +301,7 @@ export const organizationRepository: OrganizationRepository = {
     );
     const assignmentByCourse = new Map(assignments.map((assignment) => [assignment.fk_curso, assignment.fk_usuario]));
 
-    return courses.map((course) => {
+    return { records: courses.map((course) => {
       const instructorId = assignmentByCourse.get(course.id_curso);
       const instructor = instructorId ? users.get(instructorId) : undefined;
       return {
@@ -321,7 +312,7 @@ export const organizationRepository: OrganizationRepository = {
         instructor: instructor ? { id: instructor.id_usuario, name: fullName(instructor) } : null,
         updatedAt: course.fecha_actualizacion,
       };
-    });
+    }), total: count ?? 0 };
   },
 
 };

@@ -16,7 +16,10 @@ vi.mock("../src/services/auth.service", () => ({
 vi.mock("../src/services/student.service", () => ({
   studentService: {
     enroll: vi.fn(),
+    checkout: vi.fn(),
     listMyCourses: vi.fn(),
+    listMyCoursesPage: vi.fn(),
+    courseOwnership: vi.fn(),
     getLearningCourse: vi.fn(),
     setLessonProgress: vi.fn(),
     getResourceContent: vi.fn(),
@@ -82,13 +85,14 @@ describe("rutas de inscripción y progreso", () => {
 
   it("devuelve la biblioteca del usuario autenticado", async () => {
     vi.mocked(authService.verifyAccessToken).mockResolvedValue(user);
-    vi.mocked(studentService.listMyCourses).mockResolvedValue([]);
+    vi.mocked(studentService.listMyCoursesPage).mockResolvedValue({ items: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 1 } });
     const response = await request(app)
       .get("/api/v1/users/me/courses")
       .set("Authorization", "Bearer token");
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual([]);
-    expect(studentService.listMyCourses).toHaveBeenCalledWith(user.id);
+    expect(studentService.listMyCoursesPage).toHaveBeenCalledWith(user.id, { page: 1, limit: 10 });
+    expect(response.body.pagination.limit).toBe(10);
   });
 
   it("obtiene el aula del curso inscrito", async () => {
@@ -189,5 +193,35 @@ describe("rutas de inscripción y progreso", () => {
       .send({ completed: "sí" });
     expect(response.status).toBe(422);
     expect(studentService.setLessonProgress).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("compra simulada autorizada", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const input = { courseIds: [courseId], idempotencyKey: "66666666-6666-4666-8666-666666666666" };
+  it("exige sesión y no acepta importes ni usuario enviados por el cliente", async () => {
+    expect((await request(app).post("/api/v1/checkout/simulated").send(input)).status).toBe(401);
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue(user);
+    const response = await request(app).post("/api/v1/checkout/simulated")
+      .set("Authorization", "Bearer token").send({ ...input, total: 0, userId: courseId });
+    expect(response.status).toBe(422);
+    expect(studentService.checkout).not.toHaveBeenCalled();
+  });
+  it("confirma únicamente para el usuario del JWT", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue(user);
+    vi.mocked(studentService.checkout).mockResolvedValue({ id: input.idempotencyKey, total: 123, enrollments: [] } as never);
+    const response = await request(app).post("/api/v1/checkout/simulated")
+      .set("Authorization", "Bearer token").send(input);
+    expect(response.status).toBe(200);
+    expect(response.body.data.total).toBe(123);
+    expect(studentService.checkout).toHaveBeenCalledWith(user.id, input);
+  });
+  it.each([[], Array(51).fill(courseId), ["bad-id"], [courseId, courseId]])("rechaza un carrito inválido %j", async (courseIds) => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue(user);
+    const response = await request(app).post("/api/v1/checkout/simulated")
+      .set("Authorization", "Bearer token").send({ ...input, courseIds });
+    expect(response.status).toBe(422);
+    expect(studentService.checkout).not.toHaveBeenCalled();
   });
 });

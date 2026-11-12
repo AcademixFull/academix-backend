@@ -96,6 +96,7 @@ describe("servicio de catálogo", () => {
         listRelatedCourses: vi.fn().mockResolvedValue([]),
       }),
       reviewReader({
+        statsByCourseIds: vi.fn().mockResolvedValue(new Map([[record.id, { rating: 5, reviewCount: 1 }]])),
         listCourseReviews: vi.fn().mockResolvedValue([
           {
             id: "33333333-3333-4333-8333-333333333333",
@@ -142,4 +143,11 @@ describe("servicio de catálogo", () => {
       code: "COURSE_NOT_FOUND",
     });
   });
+});
+
+
+it("uses the database aggregate rather than the bounded review preview for rating", async () => {
+  const service = createCatalogService(repository({ findCourse: vi.fn().mockResolvedValue(record), listRelatedCourses: vi.fn().mockResolvedValue([]) }),
+    reviewReader({ listCourseReviews: vi.fn().mockResolvedValue([]), statsByCourseIds: vi.fn().mockResolvedValue(new Map([[record.id, { rating: 3.2, reviewCount: 500 }]])) }));
+  expect(await service.getCourse(record.slug)).toMatchObject({ rating: 3.2, reviewCount: 500, reviews: [] });
 });

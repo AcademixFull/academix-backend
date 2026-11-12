@@ -44,7 +44,7 @@ export function createReviewService(repository: ReviewRepository) {
     },
 
     async listCourseReviews(courseId: string): Promise<CourseReview[]> {
-      return (await repository.listByCourseIds([courseId])).map(publicReview);
+      return (await repository.listPublic(courseId, 1, 5)).records.map(publicReview);
     },
 
     async listPublicReviews(courseId: string, input: ReviewListQuery) {

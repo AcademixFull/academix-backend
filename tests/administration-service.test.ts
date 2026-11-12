@@ -56,6 +56,15 @@ function repository(overrides: Partial<AdministrationRepository> = {}): Administ
 }
 
 describe("servicio administrativo", () => {
+  it("lets only a platform administrator change featured visibility", async () => {
+    const repo = repository();
+    const service = createAdministrationService(repo);
+    await expect(service.updateCourse(course.id, { featuredVisible: false }, "instructor-id", "instructor"))
+      .rejects.toMatchObject({ status: 403, code: "FEATURED_ADMIN_REQUIRED" });
+    expect(repo.updateCourse).not.toHaveBeenCalled();
+    await service.updateCourse(course.id, { featuredVisible: false }, "admin-id", "admin");
+    expect(repo.updateCourse).toHaveBeenCalledWith(course.id, { featuredVisible: false }, "admin-id");
+  });
   it("impide combinar los roles Instructor y Moderador", async () => {
     const repo = repository();
     const service = createAdministrationService(repo);
@@ -209,6 +218,37 @@ describe("servicio administrativo", () => {
     expect(repo.updateCourse).toHaveBeenCalled();
   });
 
+  it("permite corregir el precio de un curso dado de baja por moderación sin restaurarlo automáticamente", async () => {
+    const moderated = { ...course, status: "moderated" as const, active: false, price: 0 };
+    const corrected = { ...moderated, price: 79 };
+    const repo = repository({
+      findCourse: vi.fn().mockResolvedValue(moderated),
+      updateCourse: vi.fn().mockResolvedValue(corrected),
+    });
+
+    const result = await createAdministrationService(repo).updateCourse(
+      course.id,
+      { price: 79 },
+      course.instructor!.id,
+      "instructor"
+    );
+
+    expect(result.status).toBe("moderated");
+    expect(result.price).toBe(79);
+    expect(repo.updateCourse).toHaveBeenCalledWith(course.id, { price: 79 }, course.instructor!.id);
+    expect(repo.transitionCourse).not.toHaveBeenCalled();
+  });
+
+  it("mantiene bloqueado el envío a revisión mientras el curso siga dado de baja por moderación", async () => {
+    const moderated = { ...course, status: "moderated" as const, active: false };
+    const repo = repository({ findCourse: vi.fn().mockResolvedValue(moderated) });
+
+    await expect(
+      createAdministrationService(repo).submitCourse(course.id, course.instructor!.id, "instructor")
+    ).rejects.toMatchObject({ status: 409, code: "COURSE_MODERATED" });
+    expect(repo.transitionCourse).not.toHaveBeenCalled();
+  });
+
   it("envía a revisión un curso publicado cuando su instructor cambia el precio", async () => {
     const published = { ...course, status: "published" as const, price: 49 };
     const withNewPrice = { ...published, price: 79 };
@@ -316,4 +356,26 @@ describe("servicio administrativo", () => {
     expect(repo.updateCourse).not.toHaveBeenCalled();
   });
 
+});
+
+
+describe("institutional administrator with a global student account", () => {
+  const org = { id: "44444444-4444-4444-8444-444444444444", name: "Campus" };
+  const scopedAccess = { canInstructorCreateCourse: vi.fn().mockResolvedValue("administrator") };
+  it("edits an own institutional course even when another instructor owns it", async () => {
+    const repo = repository({ findCourse: vi.fn().mockResolvedValue({ ...course, organization: org }), isInstructorAssigned: vi.fn().mockResolvedValue(false) });
+    const service = createAdministrationService(repo, undefined, scopedAccess);
+    await expect(service.updateCourse(course.id, { title: "New title" }, "institution-admin", "student")).resolves.toBeTruthy();
+    expect(scopedAccess.canInstructorCreateCourse).toHaveBeenCalledWith(org.id, "institution-admin");
+    expect(repo.setUserRoles).not.toHaveBeenCalled();
+  });
+  it("denies a foreign institution and an independent course", async () => {
+    const scoped = { canInstructorCreateCourse: vi.fn().mockRejectedValue({ status: 403, code: "ORGANIZATION_ACCESS_DENIED" }) };
+    const repo = repository({ findCourse: vi.fn().mockResolvedValue({ ...course, organization: org }) });
+    const service = createAdministrationService(repo, undefined, scoped);
+    await expect(service.updateCourse(course.id, { title: "New title" }, "institution-admin", "student")).rejects.toMatchObject({ status: 403 });
+    vi.mocked(repo.findCourse).mockResolvedValue({ ...course, organization: null });
+    await expect(service.updateCourse(course.id, { title: "New title" }, "institution-admin", "student")).rejects.toMatchObject({ code: "EXTERNAL_INSTRUCTOR_APPROVAL_REQUIRED" });
+    expect(repo.updateCourse).not.toHaveBeenCalled();
+  });
 });

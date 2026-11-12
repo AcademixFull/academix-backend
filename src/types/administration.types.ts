@@ -10,6 +10,7 @@ export interface ManagedUser {
   email: string;
   active: boolean;
   roles: AppRole[];
+  institutionalOrganizations?: Array<{ id: string; name: string }>;
 }
 
 export interface ManagedInstructor {
@@ -38,6 +39,7 @@ export interface ManagedCourse {
   price: number;
   certificateEnabled: boolean;
   requiresApproval: boolean;
+  featuredVisible?: boolean;
   organization: { id: string; name: string } | null;
   status: CourseWorkflowStatus;
   active: boolean;

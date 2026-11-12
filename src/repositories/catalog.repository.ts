@@ -129,6 +129,7 @@ export interface CatalogRepository {
   listRelatedCourses(courseId: string, categoryId: number): Promise<CatalogCourseRecord[]>;
   findInstructor(instructorId: string): Promise<CatalogInstructorRecord | null>;
   listInstructorCourses(instructorId: string): Promise<CatalogCourseRecord[]>;
+  listInstructorCoursePage(instructorId: string, input: CourseListQuery): Promise<{ records: CatalogCourseRecord[]; total: number }>;
 }
 
 const COURSE_COLUMNS = [
@@ -353,6 +354,7 @@ async function hydrateCourses(rows: CourseRow[]): Promise<CatalogCourseRecord[]>
 }
 
 async function publishedRows(options: {
+  instructorId?: string;
   input?: CourseListQuery;
   courseIds?: string[];
   categoryId?: number;
@@ -377,13 +379,14 @@ async function publishedRows(options: {
 
   let query = supabaseAdmin
     .from("cursos")
-    .select(COURSE_COLUMNS, { count: "exact" })
+    .select(COURSE_COLUMNS + (options.instructorId ? ",cursos_instructores!inner(fk_usuario,activo)" : ""), { count: "exact" })
     .eq("activo", true)
     .eq("fk_estado_curso", stateId)
     .order("fecha_publicacion", { ascending: false, nullsFirst: false })
     .order("id_curso", { ascending: true });
 
   if (options.independentOnly) query = query.is("fk_organizacion", null);
+  if (options.instructorId) query = query.eq("cursos_instructores.fk_usuario", options.instructorId).eq("cursos_instructores.activo", true);
   if (resolvedCategoryId !== undefined) query = query.eq("fk_categoria", resolvedCategoryId);
   if (resolvedLevelId !== undefined) query = query.eq("fk_nivel", resolvedLevelId);
   if (options.courseIds) query = query.in("id_curso", options.courseIds);
@@ -428,42 +431,14 @@ export const catalogRepository: CatalogRepository = {
   },
 
   async listFeaturedCourses(limit) {
-    const { rows } = await publishedRows({ independentOnly: true });
-    if (rows.length === 0) return [];
-
-    const { data: stateData, error: stateError } = await supabaseAdmin
-      .from("estados_inscripcion")
-      .select("id_estado_inscripcion")
-      .in("nombre", ["Activa", "Finalizada"])
-      .eq("activo", true);
-    if (stateError) throw databaseFailure();
-    const stateIds = (stateData ?? []).map((state) => Number(state.id_estado_inscripcion));
-    if (stateIds.length === 0) return hydrateCourses(rows.slice(0, Math.max(1, Math.min(limit, 5))));
-
-    const { data, error } = await supabaseAdmin
-      .from("inscripciones")
-      .select("fk_curso")
-      .in("fk_curso", rows.map((row) => row.id_curso))
-      .in("fk_estado_inscripcion", stateIds)
-      .eq("activo", true);
+    const { data, error } = await supabaseAdmin.rpc("academix_featured_course_ids", { p_limit: Math.max(1, Math.min(limit, 5)) });
     if (error) throw databaseFailure();
-
-    const counts = new Map<string, number>();
-    for (const enrollment of (data ?? []) as Array<{ fk_curso: string }>) {
-      counts.set(enrollment.fk_curso, (counts.get(enrollment.fk_curso) ?? 0) + 1);
-    }
-
-    const ranked = [...rows].sort((left, right) => {
-      const enrollmentDifference =
-        (counts.get(right.id_curso) ?? 0) - (counts.get(left.id_curso) ?? 0);
-      if (enrollmentDifference !== 0) return enrollmentDifference;
-      const rightPublished = right.fecha_publicacion ? Date.parse(right.fecha_publicacion) : 0;
-      const leftPublished = left.fecha_publicacion ? Date.parse(left.fecha_publicacion) : 0;
-      if (rightPublished !== leftPublished) return rightPublished - leftPublished;
-      return left.id_curso.localeCompare(right.id_curso);
-    });
-
-    return hydrateCourses(ranked.slice(0, Math.max(1, Math.min(limit, 5))));
+    const ids = ((data ?? []) as Array<{ id_curso: string }>).map((row) => row.id_curso);
+    if (!ids.length) return [];
+    const { rows } = await publishedRows({ courseIds: ids, limit: 5 });
+    const hydrated = await hydrateCourses(rows);
+    const rank = new Map(ids.map((id, index) => [id, index]));
+    return hydrated.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
   },
 
   async listCoursesByIds(courseIds) {
@@ -561,7 +536,7 @@ export const catalogRepository: CatalogRepository = {
 
     const user = userResult.data as unknown as UserRow;
     const profile = profileResult.data as InstructorProfileRow;
-    const courses = await this.listInstructorCourses(instructorId);
+    const courseTotals = await publishedRows({ instructorId, independentOnly: true, limit: 1 });
     let avatarUrl: string | undefined;
     if (user.fk_archivo_foto) {
       const fileResult = await supabaseAdmin
@@ -583,7 +558,7 @@ export const catalogRepository: CatalogRepository = {
       experienceYears: profile.anios_experiencia,
       ...(avatarUrl ? { avatarUrl } : {}),
       studentCount: 0,
-      courseCount: courses.length,
+      courseCount: courseTotals.total,
     };
   },
 
@@ -601,5 +576,9 @@ export const catalogRepository: CatalogRepository = {
     if (courseIds.length === 0) return [];
     const { rows } = await publishedRows({ courseIds });
     return hydrateCourses(rows);
+  },
+  async listInstructorCoursePage(instructorId, input) {
+    const result = await publishedRows({ instructorId, independentOnly: true, input });
+    return { records: await hydrateCourses(result.rows), total: result.total };
   },
 };

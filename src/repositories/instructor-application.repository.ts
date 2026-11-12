@@ -1,3 +1,4 @@
+import type { InstructorApplicationListQuery } from "../schemas/instructor-application.schemas";
 import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../errors/app-error";
 import type {
@@ -29,7 +30,7 @@ function databaseFailure(): AppError {
 export interface InstructorApplicationRepository {
   findLatestByUser(userId: string): Promise<InstructorApplication | null>;
   findById(applicationId: string): Promise<InstructorApplication | null>;
-  list(status?: InstructorApplicationStatus): Promise<InstructorApplication[]>;
+  list(input: InstructorApplicationListQuery): Promise<{ records: InstructorApplication[]; total: number }>;
   create(userId: string, enrollmentId: string, credentialReference: string): Promise<InstructorApplication>;
   resolve(
     applicationId: string,
@@ -110,12 +111,13 @@ export const instructorApplicationRepository: InstructorApplicationRepository = 
     return (await hydrate((data ?? []) as ApplicationRow[]))[0] ?? null;
   },
 
-  async list(status) {
-    let query = supabaseAdmin.from("solicitudes_verificacion_utt").select(columns).order("fecha_solicitud", { ascending: false });
-    if (status) query = query.eq("fk_estado_verificacion", await stateId(status));
-    const { data, error } = await query;
+  async list(input) {
+    let query = supabaseAdmin.from("solicitudes_verificacion_utt").select(columns, { count: "exact" }).order("fecha_solicitud", { ascending: false }).order("id_solicitud_verificacion");
+    if (input.status) query = query.eq("fk_estado_verificacion", await stateId(input.status));
+    const offset = (input.page - 1) * input.limit;
+    const { data, count, error } = await query.range(offset, offset + input.limit - 1);
     if (error) throw databaseFailure();
-    return hydrate((data ?? []) as ApplicationRow[]);
+    return { records: await hydrate((data ?? []) as ApplicationRow[]), total: count ?? 0 };
   },
 
   async create(userId, enrollmentId, credentialReference) {

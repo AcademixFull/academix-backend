@@ -2,6 +2,8 @@ import { Readable } from "node:stream";
 import { supabaseAdmin } from "../config/supabase";
 import { env } from "../config/env";
 import { AppError } from "../errors/app-error";
+import type { CheckoutInput, CheckoutReceipt } from "../types/checkout.types";
+import type { LibraryListQuery } from "../schemas/student.schemas";
 
 interface EnrollmentRow {
   id_inscripcion: string;
@@ -98,10 +100,14 @@ export interface StudentLearningModuleRecord {
 }
 
 export interface StudentRepository {
+  checkout(userId: string, input: CheckoutInput): Promise<CheckoutReceipt>;
   enroll(userId: string, courseId: string): Promise<string>;
   courseOrganizationId(courseId: string): Promise<string | null>;
   isActiveOrganizationMember(userId: string, organizationId: string): Promise<boolean>;
   listEnrollments(userId: string): Promise<StudentEnrollmentRecord[]>;
+  listEnrollmentPage(userId: string, input: LibraryListQuery): Promise<{ records: StudentEnrollmentRecord[]; total: number }>;
+  courseOwnership(userId: string, courseIds: string[]): Promise<string[]>;
+  learningSummary(userId: string): Promise<{ inProgress: number; completed: number; certificates: number; learningHours: number }>;
   findEnrollment(userId: string, courseId: string): Promise<StudentEnrollmentRecord | null>;
   listLearningModules(courseId: string): Promise<StudentLearningModuleRecord[]>;
   completedLessonIds(enrollmentId: string): Promise<string[]>;
@@ -114,9 +120,14 @@ export interface StudentRepository {
 
 function databaseFailure(error?: { message?: string; code?: string }): AppError {
   const custom: Record<string, [number, string, string]> = {
+    SUBSCRIPTION_REQUIRED: [403, "SUBSCRIPTION_REQUIRED", "Necesitas una suscripción vigente para continuar este curso."],
+    ORGANIZATION_SUBSCRIPTION_REQUIRED: [403, "ORGANIZATION_SUBSCRIPTION_REQUIRED", "La organización necesita una suscripción vigente para continuar."],
     USER_NOT_FOUND: [404, "USER_NOT_FOUND", "El usuario solicitado no existe."],
     COURSE_NOT_AVAILABLE: [404, "COURSE_NOT_AVAILABLE", "El curso no está disponible para inscripción."],
-    PAYMENT_NOT_AVAILABLE: [422, "PAYMENT_NOT_AVAILABLE", "Los pagos se habilitarán en una fase posterior."],
+    PAYMENT_NOT_AVAILABLE: [422, "CHECKOUT_REQUIRED", "Confirma la compra desde tu carrito."],
+    ORGANIZATION_MEMBERSHIP_REQUIRED: [403, "ORGANIZATION_MEMBERSHIP_REQUIRED", "Este curso está reservado para miembros activos de su organización."],
+    IDEMPOTENCY_CONFLICT: [409, "IDEMPOTENCY_CONFLICT", "La confirmación corresponde a otro carrito. Revisa tus cursos e intenta nuevamente."],
+    INVALID_CHECKOUT_INPUT: [422, "INVALID_CHECKOUT_INPUT", "Revisa los cursos de tu carrito."],
     COURSE_REQUIRES_APPROVAL: [422, "COURSE_REQUIRES_APPROVAL", "Este curso requiere aprobación administrativa."],
     ENROLLMENT_ALREADY_EXISTS: [409, "ENROLLMENT_ALREADY_EXISTS", "Ya estás inscrito en este curso."],
     ENROLLMENT_REQUIRED: [403, "ENROLLMENT_REQUIRED", "Necesitas una inscripción activa para acceder."],
@@ -160,7 +171,7 @@ async function hydrateEnrollments(rows: EnrollmentRow[]): Promise<StudentEnrollm
   const lessonsResult = moduleIds.length
     ? await supabaseAdmin
         .from("lecciones")
-        .select("id_leccion,fk_modulo,titulo,descripcion,contenido,duracion_estimada_minutos,orden,vista_previa")
+        .select("id_leccion,fk_modulo")
         .in("fk_modulo", moduleIds)
         .eq("activo", true)
     : { data: [], error: null };
@@ -210,6 +221,39 @@ const ENROLLMENT_COLUMNS = [
 ].join(",");
 
 export const studentRepository: StudentRepository = {
+  async learningSummary(userId) {
+    const { data, error } = await supabaseAdmin.rpc("academix_learning_summary", { p_user_id: userId });
+    if (error) throw databaseFailure(error);
+    return data;
+  },
+  async courseOwnership(userId, courseIds) {
+    const { data, error } = await supabaseAdmin.rpc("academix_current_course_ownership", { p_user_id: userId, p_course_ids: courseIds });
+    if (error) throw databaseFailure(error);
+    return (data ?? []) as string[];
+  },
+  async listEnrollmentPage(userId, input) {
+    let query = supabaseAdmin.from("inscripciones")
+      .select(ENROLLMENT_COLUMNS.replace("!fk_inscripcion_estado(", "!fk_inscripcion_estado!inner("), { count: "exact" })
+      .eq("fk_usuario", userId).eq("activo", true)
+      .in("estados_inscripcion.nombre", input.status === "completed" ? ["Finalizada"] : input.status === "in_progress" ? ["Activa"] : ["Activa", "Finalizada"])
+      .order("fecha_inscripcion", { ascending: false }).order("id_inscripcion");
+    if (input.courseIds) query = query.in("fk_curso", input.courseIds);
+    const offset = (input.page - 1) * input.limit;
+    const { data, error, count } = await query.range(offset, offset + input.limit - 1);
+    if (error) throw databaseFailure(error);
+    return { records: await hydrateEnrollments((data ?? []) as unknown as EnrollmentRow[]), total: count ?? 0 };
+  },
+  async checkout(userId, input) {
+    const { data, error } = await supabaseAdmin.rpc("academix_simulated_checkout", {
+      p_user_id: userId,
+      p_course_ids: input.courseIds,
+      p_idempotency_key: input.idempotencyKey,
+    });
+    if (error) throw databaseFailure(error);
+    const receipt = data as CheckoutReceipt | null;
+    if (!receipt?.id || receipt.mode !== "simulated" || !Array.isArray(receipt.items)) throw databaseFailure();
+    return receipt;
+  },
   async enroll(userId, courseId) {
     const { data, error } = await supabaseAdmin.rpc("academix_enroll_user", {
       p_user_id: userId,
