@@ -21,6 +21,7 @@ describe("GET /api/v1/health", () => {
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
     expect(response.body.data.status).toBe("ok");
+    expect(response.body.data.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(response.body.data).toHaveProperty("environment");
     expect(response.body.data).toHaveProperty("uptime");
     expect(response.body.data).toHaveProperty("timestamp");
