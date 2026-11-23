@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env";
+import { APP_VERSION } from "../config/version";
 import { checkSupabaseReadiness } from "../services/health.service";
 import { errorResponse, successResponse } from "../utils/api-response";
 
@@ -25,6 +26,7 @@ export function getHealth(_req: Request, res: Response): void {
   res.status(200).json(
     successResponse({
       status: "ok",
+      version: APP_VERSION,
       environment: env.NODE_ENV,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
