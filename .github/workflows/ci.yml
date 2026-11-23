@@ -2,30 +2,35 @@ name: Backend CI
 
 on:
   pull_request:
+    branches: [dev, main]
   push:
-    branches:
-      - main
-      - feat/backend-architecture
+    branches: [dev, main, feat/backend-architecture]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: backend-ci-${{ github.ref }}
+  group: Backend-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
+    name: Backend checks
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-
-      - run: npm ci
-      - run: npm run check
-      - run: npm audit --omit=dev
+      - name: Instalar dependencias
+        run: npm ci
+      - name: Revisar código, ejecutar pruebas y compilar
+        run: npm run check
+      - name: Revisar dependencias de producción
+        run: npm audit --omit=dev
