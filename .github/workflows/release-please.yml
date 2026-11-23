@@ -1,0 +1,72 @@
+name: Release Please
+
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: write
+    steps:
+      # workflow_run no hereda el checkout: comprobamos el SHA antes de versionar.
+      - name: Confirmar pruebas aprobadas para el main actual
+        id: gate
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data: branch } = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            const sha = branch.commit.sha;
+            if (context.eventName === 'workflow_run' && context.payload.workflow_run.head_sha !== sha) {
+              core.notice('Main cambió; la ejecución del nuevo commit gestionará la versión.');
+              core.setOutput('approved', 'false');
+              return;
+            }
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'ci.yml', branch: 'main', head_sha: sha, status: 'success', per_page: 20
+            });
+            if (!data.workflow_runs.some(run => run.head_sha === sha && ['push', 'workflow_dispatch'].includes(run.event))) {
+              throw new Error('El main actual debe aprobar CI antes de generar la versión.');
+            }
+            core.setOutput('approved', 'true');
+      - name: Crear o actualizar propuesta de versión
+        if: steps.gate.outputs.approved == 'true'
+        id: release
+        uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
+        with:
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # Los PR creados por GITHUB_TOKEN no lanzan pull_request: usamos workflow_dispatch.
+      - name: Ejecutar CI en la propuesta de versión
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            for (const proposal of JSON.parse(process.env.RELEASE_PRS || '[]')) {
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: proposal.number });
+              if (pr.head.repo.full_name !== `${owner}/${repo}`) throw new Error('Propuesta fuera del repositorio.');
+              await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: 'ci.yml', ref: pr.head.ref });
+            }
