@@ -21,6 +21,8 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN != '' }}
     permissions:
       contents: write
       issues: write
@@ -53,12 +55,15 @@ jobs:
         id: release
         uses: googleapis/release-please-action@8b8fd2cc23b2e18957157a9d923d75aa0c6f6ad5 # v4
         with:
+          # Un token propio permite que el PR del bot dispare CI de pull_request.
+          # Sin este secreto, reabrir el PR desde GitHub antes de aprobar la release.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
       # Los PR creados por GITHUB_TOKEN no lanzan pull_request: usamos workflow_dispatch.
       - name: Ejecutar CI en la propuesta de versión
-        if: steps.release.outputs.prs_created == 'true'
+        if: steps.release.outputs.prs_created == 'true' && env.HAS_RELEASE_TOKEN != 'true'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           RELEASE_PRS: ${{ steps.release.outputs.prs }}
