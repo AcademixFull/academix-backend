@@ -1,0 +1,555 @@
+openapi: 3.1.0
+info:
+  title: Academix REST API
+  version: 1.0.0
+  description: >-
+    Contrato final del backend. React consume únicamente esta API; las claves
+    administrativas y las tablas de Supabase nunca se exponen al navegador.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Desarrollo local
+tags:
+  - name: Health
+  - name: Auth
+  - name: Contact
+  - name: Catalog
+  - name: Student
+  - name: Authoring
+  - name: Instructor
+  - name: Administration
+  - name: Reviews
+  - name: Certificates
+security: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Liveness del proceso
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Disponibilidad del backend y Postgres
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      summary: Registra un alumno
+      requestBody: { $ref: "#/components/requestBodies/AuthRegistration" }
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Inicia sesión
+      requestBody: { $ref: "#/components/requestBodies/AuthCredentials" }
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/password-reset:
+    post:
+      tags: [Auth]
+      operationId: requestPasswordReset
+      summary: Solicita recuperación sin revelar si el correo existe
+      responses:
+        "204": { description: Solicitud aceptada }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/password:
+    patch:
+      tags: [Auth]
+      operationId: updatePassword
+      summary: Cambia la contraseña con un token válido
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Contraseña actualizada y sesiones revocadas }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentAuthUser
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Sesión cerrada }
+        "401": { $ref: "#/components/responses/Error" }
+  /contact/messages:
+    post:
+      tags: [Contact]
+      operationId: submitContactMessage
+      summary: Envía una solicitud al equipo de Academix
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [fullName, email, subject, message]
+              properties:
+                fullName: { type: string, minLength: 2, maxLength: 160 }
+                email: { type: string, format: email, maxLength: 254 }
+                subject: { type: string, minLength: 3, maxLength: 160 }
+                message: { type: string, minLength: 12, maxLength: 4000 }
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /categories:
+    get:
+      tags: [Catalog]
+      operationId: listCategories
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /courses:
+    get:
+      tags: [Catalog]
+      operationId: listCourses
+      summary: Catálogo público filtrable y paginado
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+  /courses/{courseId}:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    get:
+      tags: [Catalog]
+      operationId: getCourse
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/Error" }
+  /courses/{courseId}/related:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    get:
+      tags: [Catalog]
+      operationId: listRelatedCourses
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /instructors/{instructorId}:
+    parameters: [{ $ref: "#/components/parameters/InstructorId" }]
+    get:
+      tags: [Catalog]
+      operationId: getInstructor
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/Error" }
+  /instructors/{instructorId}/courses:
+    parameters: [{ $ref: "#/components/parameters/InstructorId" }]
+    get:
+      tags: [Catalog]
+      operationId: listInstructorCourses
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+  /users/me:
+    get:
+      tags: [Student]
+      operationId: getMyProfile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+    patch:
+      tags: [Student]
+      operationId: updateMyProfile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "422": { $ref: "#/components/responses/Error" }
+  /courses/{courseId}/enrollments:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Student]
+      operationId: enrollInCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+        "409": { $ref: "#/components/responses/Error" }
+  /users/me/courses:
+    get:
+      tags: [Student]
+      operationId: listMyCourses
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /users/me/courses/{courseId}/learning:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    get:
+      tags: [Student]
+      operationId: getLearningCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "403": { $ref: "#/components/responses/Error" }
+  /lessons/{lessonId}/progress:
+    parameters: [{ $ref: "#/components/parameters/LessonId" }]
+    patch:
+      tags: [Student]
+      operationId: updateLessonProgress
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Progreso actualizado }
+  /lessons/{lessonId}/resources/{resourceId}/content:
+    parameters:
+      - { $ref: "#/components/parameters/LessonId" }
+      - { $ref: "#/components/parameters/ResourceId" }
+    get:
+      tags: [Student]
+      operationId: streamLessonResource
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Binary" }
+        "206": { $ref: "#/components/responses/Binary" }
+        "416": { $ref: "#/components/responses/Error" }
+  /courses/{courseId}/reviews:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    get:
+      tags: [Reviews]
+      operationId: listCourseReviews
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+    post:
+      tags: [Reviews]
+      operationId: createCourseReview
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /users/me/certificates:
+    get:
+      tags: [Certificates]
+      operationId: listMyCertificates
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /users/me/certificates/{certificateId}:
+    parameters: [{ $ref: "#/components/parameters/CertificateId" }]
+    get:
+      tags: [Certificates]
+      operationId: getMyCertificate
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/Error" }
+  /certificates/verify/{credentialCode}:
+    parameters: [{ $ref: "#/components/parameters/CredentialCode" }]
+    get:
+      tags: [Certificates]
+      operationId: verifyCertificate
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /authoring/resource-options:
+    get:
+      tags: [Authoring]
+      operationId: getResourceOptions
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /authoring/courses/{courseId}/content:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    get:
+      tags: [Authoring]
+      operationId: getAuthoringCourseContent
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /authoring/courses/{courseId}/modules:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Authoring]
+      operationId: createModule
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+  /authoring/modules/{moduleId}:
+    parameters: [{ $ref: "#/components/parameters/ModuleId" }]
+    patch:
+      tags: [Authoring]
+      operationId: updateModule
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /authoring/modules/{moduleId}/lessons:
+    parameters: [{ $ref: "#/components/parameters/ModuleId" }]
+    post:
+      tags: [Authoring]
+      operationId: createLesson
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+  /authoring/lessons/{lessonId}:
+    parameters: [{ $ref: "#/components/parameters/LessonId" }]
+    patch:
+      tags: [Authoring]
+      operationId: updateLesson
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /authoring/lessons/{lessonId}/resources:
+    parameters: [{ $ref: "#/components/parameters/LessonId" }]
+    post:
+      tags: [Authoring]
+      operationId: createResource
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+  /authoring/resources/{resourceId}:
+    parameters: [{ $ref: "#/components/parameters/ResourceId" }]
+    patch:
+      tags: [Authoring]
+      operationId: updateResource
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /authoring/courses/{courseId}/files:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Authoring]
+      operationId: uploadCourseFile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+        "413": { $ref: "#/components/responses/Error" }
+  /instructor/courses:
+    get:
+      tags: [Instructor]
+      operationId: listManagedCourses
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /instructor/courses/{courseId}:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    patch:
+      tags: [Instructor]
+      operationId: updateManagedCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /instructor/courses/{courseId}/submit:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Instructor]
+      operationId: submitManagedCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/users:
+    get:
+      tags: [Administration]
+      operationId: adminListUsers
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+  /admin/users/{userId}/roles:
+    parameters: [{ $ref: "#/components/parameters/UserId" }]
+    patch:
+      tags: [Administration]
+      operationId: setUserRoles
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/instructors:
+    get:
+      tags: [Administration]
+      operationId: adminListInstructors
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/instructors/{userId}:
+    parameters: [{ $ref: "#/components/parameters/UserId" }]
+    put:
+      tags: [Administration]
+      operationId: upsertInstructor
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/categories:
+    post:
+      tags: [Administration]
+      operationId: createCategory
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+  /admin/categories/{categoryId}:
+    parameters: [{ $ref: "#/components/parameters/CategoryId" }]
+    patch:
+      tags: [Administration]
+      operationId: updateCategory
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/course-options:
+    get:
+      tags: [Administration]
+      operationId: getCourseOptions
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/courses:
+    get:
+      tags: [Administration]
+      operationId: adminListCourses
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+    post:
+      tags: [Administration]
+      operationId: createCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "201": { $ref: "#/components/responses/Success" }
+  /admin/courses/{courseId}:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    patch:
+      tags: [Administration]
+      operationId: adminUpdateCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/courses/{courseId}/instructor:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    put:
+      tags: [Administration]
+      operationId: assignPrincipalInstructor
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/courses/{courseId}/publish:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Administration]
+      operationId: publishCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/courses/{courseId}/archive:
+    parameters: [{ $ref: "#/components/parameters/CourseId" }]
+    post:
+      tags: [Administration]
+      operationId: archiveCourse
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+  /admin/reviews:
+    get:
+      tags: [Administration]
+      operationId: adminListReviews
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Paginated" }
+  /admin/reviews/{reviewId}/moderation:
+    parameters: [{ $ref: "#/components/parameters/ReviewId" }]
+    patch:
+      tags: [Administration]
+      operationId: moderateReview
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CourseId: { name: courseId, in: path, required: true, schema: { type: string, format: uuid } }
+    InstructorId: { name: instructorId, in: path, required: true, schema: { type: string, format: uuid } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    CategoryId: { name: categoryId, in: path, required: true, schema: { type: string, format: uuid } }
+    ModuleId: { name: moduleId, in: path, required: true, schema: { type: string, format: uuid } }
+    LessonId: { name: lessonId, in: path, required: true, schema: { type: string, format: uuid } }
+    ResourceId: { name: resourceId, in: path, required: true, schema: { type: string, format: uuid } }
+    ReviewId: { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+    CertificateId: { name: certificateId, in: path, required: true, schema: { type: string, format: uuid } }
+    CredentialCode: { name: credentialCode, in: path, required: true, schema: { type: string, pattern: "^ACX-[0-9]{4}-[A-Z0-9]{12}$" } }
+  requestBodies:
+    AuthRegistration:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [fullName, email, password]
+            properties:
+              fullName: { type: string }
+              email: { type: string, format: email }
+              password: { type: string, format: password, minLength: 8, maxLength: 72 }
+    AuthCredentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [email, password]
+            properties:
+              email: { type: string, format: email }
+              password: { type: string, format: password }
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { const: true }
+        data: {}
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { const: false }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            fields: { type: object, additionalProperties: true }
+  responses:
+    Success:
+      description: Operación correcta
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessEnvelope" }
+    Paginated:
+      description: Colección paginada
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessEnvelope" }
+    Error:
+      description: Error controlado
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RateLimited:
+      description: Cuota por IP agotada temporalmente
+      headers:
+        RateLimit: { schema: { type: string } }
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ServiceUnavailable:
+      description: La dependencia de datos no está disponible
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Binary:
+      description: Archivo completo o rango parcial autorizado
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }

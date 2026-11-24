@@ -8,13 +8,27 @@ export interface ApiSuccess<T> {
   data: T;
 }
 
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface ApiPaginatedSuccess<T> extends ApiSuccess<T[]> {
+  pagination: Pagination;
+}
+
+export type ApiErrorFields = Record<string, string | string[]>;
+
 export interface ApiErrorResponse {
   success: false;
   error: {
     code: string;
     message: string;
-    fields?: Record<string, string | string[]>;
+    fields?: ApiErrorFields;
   };
 }
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiErrorResponse;
+export type ApiCollectionResponse<T> = ApiPaginatedSuccess<T> | ApiErrorResponse;

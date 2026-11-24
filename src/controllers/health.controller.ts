@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { env } from "../config/env";
-import { successResponse } from "../utils/api-response";
+import { APP_VERSION } from "../config/version";
+import { checkSupabaseReadiness } from "../services/health.service";
+import { errorResponse, successResponse } from "../utils/api-response";
 
 /**
  * GET /api/v1/health
@@ -24,9 +26,38 @@ export function getHealth(_req: Request, res: Response): void {
   res.status(200).json(
     successResponse({
       status: "ok",
+      version: APP_VERSION,
       environment: env.NODE_ENV,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     })
   );
+}
+
+/** GET /api/v1/health/ready: comprueba la dependencia de base de datos. */
+export async function getReadiness(req: Request, res: Response): Promise<void> {
+  try {
+    await checkSupabaseReadiness();
+
+    res.status(200).json(
+      successResponse({
+        status: "ready",
+        checks: { database: "ok" },
+        timestamp: new Date().toISOString(),
+      })
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "readiness_failed",
+        timestamp: new Date().toISOString(),
+        requestId: req.requestId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      })
+    );
+
+    res
+      .status(503)
+      .json(errorResponse("SERVICE_UNAVAILABLE", "El servicio no está disponible temporalmente."));
+  }
 }

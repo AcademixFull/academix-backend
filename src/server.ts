@@ -17,3 +17,24 @@ server.on("error", (error: NodeJS.ErrnoException) => {
   }
   process.exit(1);
 });
+
+function shutdown(signal: NodeJS.Signals): void {
+  console.log(`\n${signal} recibido. Cerrando academix-backend...`);
+
+  server.close((error) => {
+    if (error) {
+      console.error("No fue posible cerrar el servidor correctamente:", error);
+      process.exit(1);
+    }
+
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error("Cierre forzado por tiempo de espera agotado.");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
