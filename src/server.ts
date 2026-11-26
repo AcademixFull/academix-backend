@@ -1,3 +1,4 @@
+import { closeMonitoring, reportServerError } from "./monitoring/instrument";
 import { createApp } from "./app";
 import { env } from "./config/env";
 
@@ -9,19 +10,22 @@ const server = app.listen(env.PORT, () => {
   console.log(`Entorno: ${env.NODE_ENV}`);
 });
 
-server.on("error", (error: NodeJS.ErrnoException) => {
+server.on("error", async (error: NodeJS.ErrnoException) => {
   if (error.code === "EADDRINUSE") {
     console.error(`❌ El puerto ${env.PORT} ya está en uso. Cierra el proceso que lo ocupa o cambia PORT en .env.`);
   } else {
     console.error("❌ Error al iniciar el servidor:", error);
   }
+  reportServerError(error);
+  await closeMonitoring();
   process.exit(1);
 });
 
 function shutdown(signal: NodeJS.Signals): void {
   console.log(`\n${signal} recibido. Cerrando academix-backend...`);
 
-  server.close((error) => {
+  server.close(async (error) => {
+    await closeMonitoring();
     if (error) {
       console.error("No fue posible cerrar el servidor correctamente:", error);
       process.exit(1);

@@ -466,3 +466,7 @@ detalle de correspondencia está en
 [`docs/backend-phases.md`](docs/backend-phases.md).
 Su guía de configuración y prueba está en
 [`docs/phase-6-5-validation.md`](docs/phase-6-5-validation.md).
+
+## Operación y monitoreo
+
+Consultar [la guía de Operate y Monitor](docs/operate-monitor.md) para la configuración de Sentry, controles de salud y respuesta a incidentes.

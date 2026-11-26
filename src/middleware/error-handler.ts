@@ -1,3 +1,4 @@
+import { reportServerError } from "../monitoring/instrument";
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { isProduction } from "../config/env";
@@ -22,6 +23,7 @@ export function errorHandler(
   _next: NextFunction
 ): void {
   if (err instanceof AppError) {
+    if (err.status >= 500) reportServerError(err);
     res.status(err.status).json(errorResponse(err.code, err.message, err.fields));
     return;
   }
@@ -59,6 +61,7 @@ export function errorHandler(
     return;
   }
 
+  reportServerError(err);
   logUnexpectedError(err, req);
 
   res
