@@ -23,6 +23,7 @@
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
+    "@sentry/node": "11.18.0",
     "@supabase/supabase-js": "2.112.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
