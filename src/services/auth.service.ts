@@ -1,3 +1,4 @@
+import type { ProfileAvatar } from "../config/profile-avatars";
 import type { AuthError, Session, User } from "@supabase/supabase-js";
 import { supabaseAdmin, supabaseAuth } from "../config/supabase";
 import { emailConfirmationRedirectUrl, env } from "../config/env";
@@ -12,6 +13,7 @@ export interface AuthUser {
   id: string;
   fullName: string;
   email: string;
+  avatarId?: ProfileAvatar | null;
   role: "student" | "instructor" | "moderator" | "admin";
 }
 
@@ -50,7 +52,7 @@ async function serializeUser(user: User): Promise<AuthUser> {
   const { data, error } = await supabaseAdmin
     .from("usuarios")
     .select(
-      "nombres, apellido_paterno, apellido_materno, activo, usuarios_roles!fk_usuario_rol_usuario(activo, roles!fk_usuario_rol_rol(nombre))"
+      "nombres, apellido_paterno, apellido_materno, avatar_preset, activo, usuarios_roles!fk_usuario_rol_usuario(activo, roles!fk_usuario_rol_rol(nombre))"
     )
     .eq("id_usuario", user.id)
     .maybeSingle();
@@ -61,6 +63,7 @@ async function serializeUser(user: User): Promise<AuthUser> {
         apellido_paterno: string;
         apellido_materno: string | null;
         activo: boolean;
+        avatar_preset: ProfileAvatar | null;
         usuarios_roles: Array<{ activo: boolean; roles: { nombre: string } | null }>;
       }
     | null;
@@ -83,6 +86,7 @@ async function serializeUser(user: User): Promise<AuthUser> {
     id: user.id,
     fullName: storedName || String(user.user_metadata.full_name ?? user.email.split("@")[0]),
     email: user.email,
+    avatarId: profile.avatar_preset ?? null,
     role: highestRole(profile?.usuarios_roles),
   };
 }

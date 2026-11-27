@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { profileAvatars } from "../config/profile-avatars";
 
 export const updateProfileSchema = z
   .object({
+    avatarId: z.enum(profileAvatars).nullable().optional(),
     fullName: z.string().trim().min(2).max(160).optional(),
     phone: z.string().trim().max(30).optional(),
     country: z.string().trim().max(100).optional(),
