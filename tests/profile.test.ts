@@ -85,4 +85,25 @@ describe("perfil protegido", () => {
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
     expect(profileService.update).not.toHaveBeenCalled();
   });
+
+  it("acepta avatares clásicos y nuevos, y permite volver a la inicial", async () => {
+    vi.mocked(authService.verifyAccessToken).mockResolvedValue(user);
+    for (const avatarId of ["nova", "ajolote", "prisma", "alquimista", null] as const) {
+      vi.mocked(profileService.update).mockResolvedValue({ ...profile, avatarId });
+      const response = await request(app)
+        .patch("/api/v1/users/me")
+        .set("Authorization", "Bearer valid.jwt.token")
+        .send({ avatarId });
+      expect(response.status).toBe(200);
+      expect(response.body.data.avatarId).toBe(avatarId);
+      expect(profileService.update).toHaveBeenLastCalledWith(user, { avatarId });
+    }
+
+    const unknown = await request(app)
+      .patch("/api/v1/users/me")
+      .set("Authorization", "Bearer valid.jwt.token")
+      .send({ avatarId: "unknown" });
+    expect(unknown.status).toBe(422);
+    expect(profileService.update).toHaveBeenCalledTimes(5);
+  });
 });
