@@ -12,6 +12,7 @@ export interface OrganizationSummary {
   joinCode: string | null;
   createdAt: string;
   ownerId?: string;
+  creatorName?: string | null;
   isOwner?: boolean;
   active?: boolean;
   subscription?: { active: boolean; startsAt: string | null; endsAt: string | null };

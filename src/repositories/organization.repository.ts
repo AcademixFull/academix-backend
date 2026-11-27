@@ -97,7 +97,7 @@ function workflowStatus(value: string | undefined): OrganizationCourseSummary["s
   return "draft";
 }
 
-function fullName(user: MemberUserRow): string {
+function fullName(user: Pick<MemberUserRow, "nombres" | "apellido_paterno" | "apellido_materno">): string {
   return [user.nombres, user.apellido_paterno, user.apellido_materno]
     .filter(Boolean)
     .join(" ")
@@ -156,7 +156,20 @@ export const organizationRepository: OrganizationRepository = {
       .eq("fk_usuario", userId)
       .order("fecha_union", { ascending: true });
     if (error) throw databaseError(error);
-    return ((data ?? []) as OrganizationRow[]).map((organization) => {
+    const organizations = (data ?? []) as OrganizationRow[];
+    const creatorIds = [...new Set(organizations.flatMap(({ creada_por }) => creada_por ? [creada_por] : []))];
+    const names = new Map<string, string>();
+    if (creatorIds.length > 0) {
+      const { data: creators, error: creatorError } = await supabaseAdmin
+        .from("usuarios")
+        .select("id_usuario,nombres,apellido_paterno,apellido_materno")
+        .in("id_usuario", creatorIds);
+      if (creatorError) throw databaseError(creatorError);
+      for (const creator of creators ?? []) {
+        names.set(creator.id_usuario, fullName(creator));
+      }
+    }
+    return organizations.map((organization) => {
       const role = roleFromDatabase(organization.rol);
       const isOwner = organization.creada_por === userId;
       return {
@@ -170,6 +183,7 @@ export const organizationRepository: OrganizationRepository = {
         joinCode: role === "administrator" ? organization.codigo_union : null,
         createdAt: organization.fecha_creacion,
         ownerId: organization.creada_por ?? undefined,
+        creatorName: (organization.creada_por && names.get(organization.creada_por)) || null,
         isOwner,
         active: organization.activa,
         subscription: { active: organization.paid_active, startsAt: organization.subscription_start, endsAt: organization.subscription_end },

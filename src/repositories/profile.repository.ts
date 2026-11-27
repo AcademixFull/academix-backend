@@ -1,3 +1,4 @@
+import type { ProfileAvatar } from "../config/profile-avatars";
 import { supabaseAdmin } from "../config/supabase";
 import { AppError } from "../errors/app-error";
 import type { UpdateProfileFields } from "../types/profile.types";
@@ -9,6 +10,7 @@ export interface ProfileRecord {
   phone: string;
   country: string;
   bio: string;
+  avatarId?: ProfileAvatar | null;
 }
 
 export interface ProfileRepository {
@@ -25,10 +27,11 @@ interface ProfileRow {
   telefono: string | null;
   pais: string | null;
   biografia: string | null;
+  avatar_preset: ProfileAvatar | null;
 }
 
 const PROFILE_COLUMNS =
-  "id_usuario,nombres,apellido_paterno,apellido_materno,correo,telefono,pais,biografia";
+  "id_usuario,nombres,apellido_paterno,apellido_materno,correo,telefono,pais,biografia,avatar_preset";
 
 function databaseFailure(): AppError {
   return new AppError(502, "DATABASE_ERROR", "No fue posible consultar el perfil.");
@@ -45,6 +48,7 @@ function serialize(row: ProfileRow): ProfileRecord {
     phone: row.telefono ?? "",
     country: row.pais ?? "",
     bio: row.biografia ?? "",
+    avatarId: row.avatar_preset,
   };
 }
 
@@ -70,6 +74,7 @@ export const profileRepository: ProfileRepository = {
       values.apellido_paterno = "";
       values.apellido_materno = null;
     }
+    if (fields.avatarId !== undefined) values.avatar_preset = fields.avatarId;
     if (fields.phone !== undefined) values.telefono = fields.phone || null;
     if (fields.country !== undefined) values.pais = fields.country || null;
     if (fields.bio !== undefined) values.biografia = fields.bio || null;
