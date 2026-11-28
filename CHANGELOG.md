@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/AcademixFull/academix-backend/compare/v0.2.0...v0.3.0) (2026-11-28)
+
+
+### Features
+
+* **cursos:** exige portada y video introductorio ([#8](https://github.com/AcademixFull/academix-backend/issues/8)) ([8f6f9b0](https://github.com/AcademixFull/academix-backend/commit/8f6f9b0d96fe850e910c2ae046093080caed2284))
+* **monitor:** integrar Sentry para errores internos de la API ([3bfd23c](https://github.com/AcademixFull/academix-backend/commit/3bfd23c38c22ff558ed46c848bec0e0eaccb01e2))
+* **monitor:** integrar Sentry para errores internos de la API ([b9b15aa](https://github.com/AcademixFull/academix-backend/commit/b9b15aa66a88f549078ab1c8e2322874f6c8cf21))
+* **profile:** amplía el catálogo de avatares ([#7](https://github.com/AcademixFull/academix-backend/issues/7)) ([88a5ffe](https://github.com/AcademixFull/academix-backend/commit/88a5ffea9edf9f00106f7f68c4192af1b753aee7))
+* **profile:** guarda avatares y muestra creadores de organizaciones ([#6](https://github.com/AcademixFull/academix-backend/issues/6)) ([4ec8fbf](https://github.com/AcademixFull/academix-backend/commit/4ec8fbfdfa7820417b232993cf437c9fba6ff045))
+
 ## [0.2.0](https://github.com/AcademixFull/academix-backend/compare/v0.1.0...v0.2.0) (2026-11-24)
 
 
