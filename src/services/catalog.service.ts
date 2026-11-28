@@ -121,6 +121,7 @@ export function createCatalogService(
       }
       return {
         ...courseSummary,
+        ...(record.introVideoUrl ? { introVideoUrl: record.introVideoUrl } : {}),
         description: record.description,
         learningOutcomes: textList(record.objectives),
         requirements: textList(record.requirements),

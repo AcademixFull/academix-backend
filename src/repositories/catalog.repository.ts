@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../config/supabase";
+import { courseMediaPath, signedCourseMedia, type CourseMediaFile } from "../utils/course-media";
 import { AppError } from "../errors/app-error";
 import type { CourseListQuery } from "../schemas/catalog.schemas";
 
@@ -18,6 +19,7 @@ interface CourseRow {
   permite_certificado: boolean;
   fecha_publicacion: string | null;
   fk_archivo_portada: string | null;
+  fk_archivo_video: string | null;
 }
 
 interface CategoryRow {
@@ -49,11 +51,6 @@ interface InstructorProfileRow {
   fk_usuario: string;
   especialidad: string;
   anios_experiencia: number;
-}
-
-interface FileRow {
-  id_archivo: string;
-  ruta_storage: string;
 }
 
 interface ModuleRow {
@@ -101,6 +98,7 @@ export interface CatalogCourseRecord {
   price: number;
   certificateEnabled: boolean;
   imageUrl?: string;
+  introVideoUrl?: string;
   category: CatalogCategoryRecord;
   categoryId: number;
   levelName: string;
@@ -148,6 +146,7 @@ const COURSE_COLUMNS = [
   "permite_certificado",
   "fecha_publicacion",
   "fk_archivo_portada",
+  "fk_archivo_video",
 ].join(",");
 
 function databaseFailure(): AppError {
@@ -221,7 +220,7 @@ async function levelId(level: keyof typeof levelNames): Promise<number | null> {
   return data ? Number((data as { id_nivel: number }).id_nivel) : null;
 }
 
-async function hydrateCourses(rows: CourseRow[]): Promise<CatalogCourseRecord[]> {
+async function hydrateCourses(rows: CourseRow[], includeIntro = false): Promise<CatalogCourseRecord[]> {
   if (rows.length === 0) return [];
 
   const courseIds = unique(rows.map((row) => row.id_curso));
@@ -277,10 +276,11 @@ async function hydrateCourses(rows: CourseRow[]): Promise<CatalogCourseRecord[]>
   const profileRows = (profilesResult.data ?? []) as InstructorProfileRow[];
   const fileIds = unique([
     ...rows.map((row) => row.fk_archivo_portada).filter((id): id is string => Boolean(id)),
+    ...(includeIntro ? rows.flatMap((row) => row.fk_archivo_video ? [row.fk_archivo_video] : []) : []),
     ...users.map((row) => row.fk_archivo_foto).filter((id): id is string => Boolean(id)),
   ]);
   const filesResult = fileIds.length
-    ? await supabaseAdmin.from("archivos").select("id_archivo,ruta_storage").in("id_archivo", fileIds)
+    ? await supabaseAdmin.from("archivos").select("id_archivo,ruta_storage,mime_type,fk_curso_contenido").in("id_archivo", fileIds).eq("activo", true)
     : { data: [], error: null };
   if (filesResult.error) throw databaseFailure();
 
@@ -302,21 +302,23 @@ async function hydrateCourses(rows: CourseRow[]): Promise<CatalogCourseRecord[]>
   const assignmentByCourse = new Map(assignments.map((row) => [row.fk_curso, row]));
   const userById = new Map(users.map((row) => [row.id_usuario, row]));
   const profileByUser = new Map(profileRows.map((row) => [row.fk_usuario, row]));
-  const fileById = new Map(
-    ((filesResult.data ?? []) as FileRow[]).map((row) => [row.id_archivo, row.ruta_storage])
-  );
+  const files = new Map(((filesResult.data ?? []) as CourseMediaFile[]).map((file) => [file.id_archivo, file]));
+  const assets = rows.map((row) => ({
+    cover: courseMediaPath(files.get(row.fk_archivo_portada ?? ""), row.id_curso, "cover"),
+    intro: includeIntro ? courseMediaPath(files.get(row.fk_archivo_video ?? ""), row.id_curso, "intro") : undefined,
+  }));
+  const signedUrls = await signedCourseMedia(assets.flatMap(({ cover, intro }) => [cover, intro]));
 
-  return rows.map((row) => {
+  return rows.map((row, index) => {
     const category = categories.get(row.fk_categoria);
     const assignment = assignmentByCourse.get(row.id_curso);
     const user = assignment ? userById.get(assignment.fk_usuario) : undefined;
     const profile = user ? profileByUser.get(user.id_usuario) : undefined;
-    const avatarUrl = user?.fk_archivo_foto
-      ? publicFileUrl(fileById.get(user.fk_archivo_foto))
-      : undefined;
-    const imageUrl = row.fk_archivo_portada
-      ? publicFileUrl(fileById.get(row.fk_archivo_portada))
-      : undefined;
+    const avatarUrl = publicFileUrl(files.get(user?.fk_archivo_foto ?? "")?.ruta_storage);
+    const { cover, intro } = assets[index] ?? {};
+    const imageUrl = (cover ? signedUrls.get(cover) : undefined)
+      ?? publicFileUrl(files.get(row.fk_archivo_portada ?? "")?.ruta_storage);
+    const introVideoUrl = intro ? signedUrls.get(intro) : undefined;
 
     return {
       id: row.id_curso,
@@ -330,6 +332,7 @@ async function hydrateCourses(rows: CourseRow[]): Promise<CatalogCourseRecord[]>
       price: Number(row.cuota_recuperacion),
       certificateEnabled: row.permite_certificado,
       ...(imageUrl ? { imageUrl } : {}),
+      ...(introVideoUrl ? { introVideoUrl } : {}),
       category: {
         id: category?.id_categoria ?? row.fk_categoria,
         name: category?.nombre ?? "Sin categoría",
@@ -360,6 +363,7 @@ async function publishedRows(options: {
   categoryId?: number;
   excludeCourseId?: string;
   independentOnly?: boolean;
+  includeLegacy?: boolean;
   limit?: number;
 }): Promise<{ rows: CourseRow[]; total: number }> {
   const stateId = await publishedStateId();
@@ -385,6 +389,7 @@ async function publishedRows(options: {
     .order("fecha_publicacion", { ascending: false, nullsFirst: false })
     .order("id_curso", { ascending: true });
 
+  if (!options.includeLegacy) query = query.not("fk_archivo_portada", "is", null).not("fk_archivo_video", "is", null);
   if (options.independentOnly) query = query.is("fk_organizacion", null);
   if (options.instructorId) query = query.eq("cursos_instructores.fk_usuario", options.instructorId).eq("cursos_instructores.activo", true);
   if (resolvedCategoryId !== undefined) query = query.eq("fk_categoria", resolvedCategoryId);
@@ -443,7 +448,7 @@ export const catalogRepository: CatalogRepository = {
 
   async listCoursesByIds(courseIds) {
     if (courseIds.length === 0) return [];
-    const { rows } = await publishedRows({ courseIds: unique(courseIds) });
+    const { rows } = await publishedRows({ courseIds: unique(courseIds), includeLegacy: true });
     return hydrateCourses(rows);
   },
 
@@ -453,7 +458,9 @@ export const catalogRepository: CatalogRepository = {
       .from("cursos")
       .select(COURSE_COLUMNS)
       .eq("activo", true)
-      .eq("fk_estado_curso", stateId);
+      .eq("fk_estado_curso", stateId)
+      .not("fk_archivo_portada", "is", null)
+      .not("fk_archivo_video", "is", null);
 
     query = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       identifier
@@ -465,8 +472,8 @@ export const catalogRepository: CatalogRepository = {
     if (error) throw databaseFailure();
     if (!data) return null;
 
-    const [record] = await hydrateCourses([data as unknown as CourseRow]);
-    if (!record) return null;
+    const [record] = await hydrateCourses([data as unknown as CourseRow], true);
+    if (!record?.imageUrl || !record.introVideoUrl) return null;
 
     const modulesResult = await supabaseAdmin
       .from("modulos")

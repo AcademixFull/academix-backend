@@ -274,6 +274,9 @@ export function createAdministrationService(
       if (course.status !== "draft") {
         throw new AppError(409, "INVALID_COURSE_TRANSITION", "Solo un borrador puede enviarse a revisión.");
       }
+      if (!course.mediaReady) {
+        throw new AppError(422, "COURSE_MEDIA_REQUIRED", "Agrega una portada y un video introductorio antes de enviar el curso a revisión.");
+      }
       const updated = await repository.transitionCourse(courseId, "draft", "review", actorId);
       if (!updated) throw new AppError(409, "COURSE_STATE_CHANGED", "El curso cambió de estado.");
       return updated;
@@ -295,6 +298,9 @@ export function createAdministrationService(
           "COURSE_NOT_READY",
           "El curso requiere instructor, descripciones y objetivos antes de publicarse."
         );
+      }
+      if (!course.mediaReady) {
+        throw new AppError(422, "COURSE_MEDIA_REQUIRED", "El curso necesita una portada y un video introductorio antes de publicarse.");
       }
       if (!course.organization && course.price <= 0) {
         throw new AppError(422, "COURSE_PRICE_REQUIRED", "El curso necesita un precio externo mayor a cero antes de publicarse.");

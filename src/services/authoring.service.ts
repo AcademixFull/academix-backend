@@ -17,7 +17,9 @@ import type {
 import type { AppRole } from "../types/administration.types";
 import { organizationService } from "./organization.service";
 
-export const COURSE_CONTENT_BUCKET = "academix-course-content";
+import { COURSE_CONTENT_BUCKET, isCourseMediaType, matchesCourseMediaBytes, type CourseMediaKind } from "../utils/course-media";
+
+export { COURSE_CONTENT_BUCKET };
 export const MAX_COURSE_FILE_BYTES = 25 * 1024 * 1024;
 
 const allowedMimeTypes = new Set([
@@ -93,12 +95,47 @@ export function createAuthoringService(repository: AuthoringRepository, scopedOr
     return requireEntity(await repository.resourceCourseId(resourceId), "RESOURCE_NOT_FOUND", "El recurso solicitado no existe.");
   }
 
+  async function saveFile(courseId: string, body: Buffer, originalName: string, mimeType: string, actorId: string) {
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      throw new AppError(422, "EMPTY_FILE", "Debes enviar un archivo.");
+    }
+    if (body.length > MAX_COURSE_FILE_BYTES) {
+      throw new AppError(413, "FILE_TOO_LARGE", "El archivo supera el límite de 25 MB.");
+    }
+    const normalizedMime = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!allowedMimeTypes.has(normalizedMime)) {
+      throw new AppError(415, "UNSUPPORTED_FILE_TYPE", "El tipo de archivo no está permitido.");
+    }
+    const fileName = safeName(originalName);
+    const extension = extname(fileName).slice(1).toLowerCase().slice(0, 20);
+    const storedName = `${randomUUID()}${extension ? `.${extension}` : ""}`;
+    const storagePath = `courses/${courseId}/${storedName}`;
+    const sha256 = createHash("sha256").update(body).digest("hex");
+    const typeId = await repository.fileTypeId(normalizedMime);
+    if (!typeId) throw new AppError(500, "FILE_TYPE_NOT_CONFIGURED", "El tipo de archivo no está configurado.");
+
+    const { error } = await supabaseAdmin.storage.from(COURSE_CONTENT_BUCKET).upload(storagePath, body, {
+      contentType: normalizedMime,
+      upsert: false,
+    });
+    if (error) throw new AppError(502, "STORAGE_UPLOAD_FAILED", "No fue posible almacenar el archivo.");
+
+    try {
+      const file = await repository.createFile({ courseId, actorId, typeId, originalName: fileName, storedName, storagePath, mimeType: normalizedMime, extension, sizeBytes: body.length, sha256 });
+      return { file, storagePath };
+    } catch (error) {
+      await supabaseAdmin.storage.from(COURSE_CONTENT_BUCKET).remove([storagePath]);
+      throw error;
+    }
+  }
+
   return {
     resourceOptions: () => repository.resourceOptions(),
 
     async getContent(courseId: string, actorId: string, actorRole: AppRole) {
       await assertEditable(courseId, actorId, actorRole);
-      return repository.listContent(courseId);
+      const [content, media] = await Promise.all([repository.listContent(courseId), repository.courseMedia(courseId)]);
+      return { ...content, media };
     },
 
     async createModule(courseId: string, input: CreateModuleInput, actorId: string, actorRole: AppRole) {
@@ -133,36 +170,27 @@ export function createAuthoringService(repository: AuthoringRepository, scopedOr
 
     async uploadFile(courseId: string, body: Buffer, originalName: string, mimeType: string, actorId: string, actorRole: AppRole) {
       await assertEditable(courseId, actorId, actorRole);
-      if (!Buffer.isBuffer(body) || body.length === 0) {
-        throw new AppError(422, "EMPTY_FILE", "Debes enviar un archivo.");
-      }
-      if (body.length > MAX_COURSE_FILE_BYTES) {
-        throw new AppError(413, "FILE_TOO_LARGE", "El archivo supera el límite de 25 MB.");
-      }
+      return (await saveFile(courseId, body, originalName, mimeType, actorId)).file;
+    },
+
+    async uploadMedia(courseId: string, kind: CourseMediaKind, body: Buffer, originalName: string, mimeType: string, actorId: string, actorRole: AppRole) {
+      const access = await assertEditable(courseId, actorId, actorRole);
       const normalizedMime = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
-      if (!allowedMimeTypes.has(normalizedMime)) {
-        throw new AppError(415, "UNSUPPORTED_FILE_TYPE", "El tipo de archivo no está permitido.");
+      if (!Buffer.isBuffer(body) || !isCourseMediaType(kind, normalizedMime) || !matchesCourseMediaBytes(body, normalizedMime)) {
+        throw new AppError(415, "INVALID_COURSE_MEDIA", kind === "cover"
+          ? "Sube una portada JPG, PNG o WebP válida."
+          : "Sube un video introductorio MP4 válido.");
       }
-      const fileName = safeName(originalName);
-      const extension = extname(fileName).slice(1).toLowerCase().slice(0, 20);
-      const storedName = `${randomUUID()}${extension ? `.${extension}` : ""}`;
-      const storagePath = `courses/${courseId}/${storedName}`;
-      const sha256 = createHash("sha256").update(body).digest("hex");
-      const typeId = await repository.fileTypeId(normalizedMime);
-      if (!typeId) throw new AppError(500, "FILE_TYPE_NOT_CONFIGURED", "El tipo de archivo no está configurado.");
-
-      const { error } = await supabaseAdmin.storage.from(COURSE_CONTENT_BUCKET).upload(storagePath, body, {
-        contentType: normalizedMime,
-        upsert: false,
-      });
-      if (error) throw new AppError(502, "STORAGE_UPLOAD_FAILED", "No fue posible almacenar el archivo.");
-
-      try {
-        return await repository.createFile({ courseId, actorId, typeId, originalName: fileName, storedName, storagePath, mimeType: normalizedMime, extension, sizeBytes: body.length, sha256 });
-      } catch (error) {
+      if (access.stateId === undefined) throw new AppError(409, "COURSE_STATE_CHANGED", "Vuelve a abrir el curso.");
+      const { file, storagePath } = await saveFile(courseId, body, originalName, normalizedMime, actorId);
+      const attached = await repository.attachCourseMedia(courseId, access.stateId, kind, file.id, actorId);
+      if (!attached) {
+        await supabaseAdmin.from("archivos").delete().eq("id_archivo", file.id);
         await supabaseAdmin.storage.from(COURSE_CONTENT_BUCKET).remove([storagePath]);
-        throw error;
+        throw new AppError(409, "COURSE_STATE_CHANGED", "El curso cambió de estado. Vuelve a abrirlo.");
       }
+      return repository.courseMedia(courseId);
+
     },
   };
 }
