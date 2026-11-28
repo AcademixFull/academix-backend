@@ -57,6 +57,8 @@ interface CourseRow {
   fecha_creacion: string;
   fecha_actualizacion: string;
   fk_organizacion: string | null;
+  fk_archivo_portada?: string | null;
+  fk_archivo_video?: string | null;
 }
 
 interface CourseAssignmentRow {
@@ -148,6 +150,8 @@ const COURSE_COLUMNS = [
   "fecha_creacion",
   "fecha_actualizacion",
   "fk_organizacion",
+  "fk_archivo_portada",
+  "fk_archivo_video",
 ].join(",");
 
 const roleToDatabase: Record<AppRole, string> = {
@@ -242,6 +246,7 @@ function mappedDatabaseError(error: { code?: string; message?: string }): AppErr
   const customErrors: Record<string, [number, string, string]> = {
     ADMIN_REQUIRED: [403, "ROLE_FORBIDDEN", "Se requiere el rol Administrador."],
     USER_NOT_FOUND: [404, "USER_NOT_FOUND", "El usuario solicitado no existe."],
+    COURSE_MEDIA_REQUIRED: [422, "COURSE_MEDIA_REQUIRED", "El curso requiere una portada y un video introductorio."],
     COURSE_NOT_FOUND: [404, "COURSE_NOT_FOUND", "El curso solicitado no existe."],
     INSTRUCTOR_NOT_FOUND: [404, "INSTRUCTOR_NOT_FOUND", "El instructor solicitado no existe."],
     LAST_ADMIN_REQUIRED: [409, "LAST_ADMIN_REQUIRED", "No puedes retirar al último administrador."],
@@ -454,6 +459,7 @@ async function hydrateCourses(rows: CourseRow[]): Promise<ManagedCourse[]> {
       id: row.id_curso,
       slug: row.slug,
       title: row.titulo,
+      mediaReady: Boolean(row.fk_archivo_portada && row.fk_archivo_video),
       shortDescription: row.descripcion_corta ?? "",
       description: row.descripcion ?? "",
       learningOutcomes: textList(row.objetivos),

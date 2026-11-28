@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { courseMediaKinds } from "../utils/course-media";
 import type { NextFunction, Request, Response } from "express";
 import { AppError } from "../errors/app-error";
 import {
@@ -77,4 +79,14 @@ export const uploadCourseFile = handler(async (req, res) => {
   if (!originalName) throw new AppError(422, "FILE_NAME_REQUIRED", "Debes enviar la cabecera x-file-name.");
   const user = actor(req);
   res.status(201).json(successResponse(await authoringService.uploadFile(courseId, req.body as Buffer, originalName, req.header("content-type") ?? "", user.id, user.role)));
+});
+
+
+export const uploadCourseMedia = handler(async (req, res) => {
+  const { courseId } = courseContentIdentifierSchema.parse(req.params);
+  const kind = z.enum(courseMediaKinds).parse(req.params.kind);
+  const name = req.header("x-file-name");
+  if (!name) throw new AppError(422, "FILE_NAME_REQUIRED", "Debes enviar la cabecera x-file-name.");
+  const user = actor(req);
+  res.status(201).json(successResponse(await authoringService.uploadMedia(courseId, kind, req.body as Buffer, name, req.header("content-type") ?? "", user.id, user.role)));
 });

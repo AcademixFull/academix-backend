@@ -50,6 +50,7 @@ function databaseError(error?: { code?: string; message?: string }): AppError {
   const mapped: Record<string, [number, string, string]> = {
     MODERATOR_REQUIRED: [403, "MODERATOR_REQUIRED", "Se requiere el rol Moderador o Administrador."],
     ADMIN_REQUIRED: [403, "ADMIN_REQUIRED", "Se requiere el rol Administrador."],
+    COURSE_MEDIA_REQUIRED: [422, "COURSE_MEDIA_REQUIRED", "El curso requiere una portada y un video introductorio."],
     COURSE_NOT_FOUND: [404, "COURSE_NOT_FOUND", "El curso solicitado no existe."],
     INVALID_MODERATION_STATE: [409, "INVALID_MODERATION_STATE", "Solo se puede moderar un curso en revisión o publicado."],
     COURSE_ALREADY_MODERATED: [409, "COURSE_ALREADY_MODERATED", "El curso ya está dado de baja por moderación."],

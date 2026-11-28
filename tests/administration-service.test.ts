@@ -7,6 +7,7 @@ const course: ManagedCourse = {
   id: "22222222-2222-4222-8222-222222222222",
   slug: "curso-prueba",
   title: "Curso de prueba",
+  mediaReady: true,
   shortDescription: "Descripción corta",
   description: "Descripción completa",
   learningOutcomes: ["Aprender"],
@@ -174,6 +175,18 @@ describe("servicio administrativo", () => {
     );
     expect(result.status).toBe("review");
     expect(repo.transitionCourse).toHaveBeenCalledWith(course.id, "draft", "review", expect.any(String));
+  });
+
+  it("requiere portada y video al enviar y publicar", async () => {
+    const repo = repository({ findCourse: vi.fn()
+      .mockResolvedValueOnce({ ...course, mediaReady: false })
+      .mockResolvedValueOnce({ ...course, status: "review", mediaReady: false }) });
+    const service = createAdministrationService(repo);
+    await expect(service.submitCourse(course.id, course.instructor!.id, "instructor"))
+      .rejects.toMatchObject({ status: 422, code: "COURSE_MEDIA_REQUIRED" });
+    await expect(service.publishCourse(course.id, course.instructor!.id))
+      .rejects.toMatchObject({ status: 422, code: "COURSE_MEDIA_REQUIRED" });
+    expect(repo.transitionCourse).not.toHaveBeenCalled();
   });
 
   it("rechaza publicar un curso incompleto", async () => {

@@ -54,6 +54,7 @@ export interface CourseModule {
 }
 
 export interface CourseDetail extends CourseSummary {
+  introVideoUrl?: string;
   description: string;
   learningOutcomes: string[];
   requirements: string[];

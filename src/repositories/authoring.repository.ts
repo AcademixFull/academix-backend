@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../config/supabase";
+import { courseMediaPath, signedCourseMedia, type CourseMedia, type CourseMediaFile, type CourseMediaKind } from "../utils/course-media";
 import { AppError } from "../errors/app-error";
 import type {
   CreateLessonInput,
@@ -19,6 +20,7 @@ import type {
 
 interface CourseAccessRow {
   id_curso: string;
+  fk_estado_curso: number;
   fk_organizacion: string | null;
   estados_curso: { nombre: string } | null;
 }
@@ -63,6 +65,7 @@ export interface CourseAuthoringAccess {
   organizationId: string | null;
   status: CourseContentStatus;
   assigned: boolean;
+  stateId?: number;
 }
 
 export interface FileRecordInput {
@@ -76,6 +79,7 @@ export interface FileRecordInput {
   extension: string;
   sizeBytes: number;
   sha256: string;
+  mediaKind?: CourseMediaKind;
 }
 
 export interface AuthoringRepository {
@@ -92,6 +96,8 @@ export interface AuthoringRepository {
   updateLesson(lessonId: string, input: UpdateLessonInput, actorId: string): Promise<AuthoringLesson | null>;
   createResource(lessonId: string, input: CreateResourceInput, actorId: string): Promise<AuthoringResource>;
   updateResource(resourceId: string, input: UpdateResourceInput, actorId: string): Promise<AuthoringResource | null>;
+  courseMedia(courseId: string): Promise<CourseMedia>;
+  attachCourseMedia(courseId: string, stateId: number, kind: CourseMediaKind, fileId: string, actorId: string): Promise<boolean>;
   createFile(input: FileRecordInput): Promise<UploadedCourseFile>;
 }
 
@@ -171,7 +177,7 @@ export const authoringRepository: AuthoringRepository = {
   async courseAccess(courseId, actorId) {
     const { data, error } = await supabaseAdmin
       .from("cursos")
-      .select("id_curso,fk_organizacion,estados_curso!fk_curso_estado(nombre)")
+      .select("id_curso,fk_estado_curso,fk_organizacion,estados_curso!fk_curso_estado(nombre)")
       .eq("id_curso", courseId)
       .maybeSingle();
     if (error) throw databaseError(error);
@@ -179,7 +185,35 @@ export const authoringRepository: AuthoringRepository = {
     const { count, error: assignmentError } = await supabaseAdmin.from("cursos_instructores").select("id_curso_instructor", { count: "exact", head: true }).eq("fk_curso", courseId).eq("fk_usuario", actorId).eq("activo", true);
     if (assignmentError) throw databaseError(assignmentError);
     const row = data as unknown as CourseAccessRow;
-    return { courseId: row.id_curso, organizationId: row.fk_organizacion, status: status(row.estados_curso?.nombre), assigned: (count ?? 0) > 0 };
+    return { courseId: row.id_curso, stateId: row.fk_estado_curso, organizationId: row.fk_organizacion, status: status(row.estados_curso?.nombre), assigned: (count ?? 0) > 0 };
+  },
+
+  async courseMedia(courseId) {
+    const { data: course, error } = await supabaseAdmin
+      .from("cursos")
+      .select("fk_archivo_portada,fk_archivo_video")
+      .eq("id_curso", courseId)
+      .single();
+    if (error || !course) throw databaseError(error ?? undefined);
+    const ids = [course.fk_archivo_portada, course.fk_archivo_video].filter(Boolean);
+    if (!ids.length) return {};
+    const { data, error: fileError } = await supabaseAdmin.from("archivos")
+      .select("id_archivo,ruta_storage,mime_type,fk_curso_contenido,uso_presentacion").in("id_archivo", ids).eq("activo", true);
+    if (fileError) throw databaseError(fileError);
+    const files = new Map((data as CourseMediaFile[] ?? []).map((file) => [file.id_archivo, file]));
+    const cover = courseMediaPath(files.get(course.fk_archivo_portada), courseId, "cover");
+    const intro = courseMediaPath(files.get(course.fk_archivo_video), courseId, "intro");
+    const urls = await signedCourseMedia([cover, intro]);
+    return { coverUrl: cover ? urls.get(cover) : undefined, introVideoUrl: intro ? urls.get(intro) : undefined };
+  },
+
+  async attachCourseMedia(courseId, stateId, kind, fileId, actorId) {
+    const column = kind === "cover" ? "fk_archivo_portada" : "fk_archivo_video";
+    const { data, error } = await supabaseAdmin.from("cursos")
+      .update({ [column]: fileId, actualizado_por: actorId })
+      .eq("id_curso", courseId).eq("fk_estado_curso", stateId).select("id_curso").maybeSingle();
+    if (error) throw databaseError(error);
+    return Boolean(data);
   },
 
   async moduleCourseId(moduleId) {
@@ -278,7 +312,7 @@ export const authoringRepository: AuthoringRepository = {
   },
 
   async createFile(input) {
-    const { data, error } = await supabaseAdmin.from("archivos").insert({ fk_tipo_archivo: input.typeId, nombre_original: input.originalName, nombre_almacenado: input.storedName, ruta_storage: input.storagePath, mime_type: input.mimeType, extension: input.extension, tamano_bytes: input.sizeBytes, hash_archivo: input.sha256, publico: false, activo: true, fk_curso_contenido: input.courseId, subido_por: input.actorId, actualizado_por: input.actorId }).select("id_archivo,nombre_original,mime_type,tamano_bytes,hash_archivo,fecha_subida").single();
+    const { data, error } = await supabaseAdmin.from("archivos").insert({ fk_tipo_archivo: input.typeId, nombre_original: input.originalName, nombre_almacenado: input.storedName, ruta_storage: input.storagePath, mime_type: input.mimeType, extension: input.extension, tamano_bytes: input.sizeBytes, hash_archivo: input.sha256, publico: false, activo: true, uso_presentacion: input.mediaKind ?? null, fk_curso_contenido: input.courseId, subido_por: input.actorId, actualizado_por: input.actorId }).select("id_archivo,nombre_original,mime_type,tamano_bytes,hash_archivo,fecha_subida").single();
     if (error) throw databaseError(error);
     const row = data as { id_archivo: string; nombre_original: string; mime_type: string; tamano_bytes: number | string; hash_archivo: string; fecha_subida: string };
     return { id: row.id_archivo, originalName: row.nombre_original, mimeType: row.mime_type, sizeBytes: Number(row.tamano_bytes), sha256: row.hash_archivo, createdAt: row.fecha_subida };

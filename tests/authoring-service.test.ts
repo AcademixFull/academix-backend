@@ -28,6 +28,8 @@ function repository(overrides: Partial<AuthoringRepository> = {}): AuthoringRepo
     updateLesson: vi.fn().mockResolvedValue(null),
     createResource: vi.fn(),
     updateResource: vi.fn().mockResolvedValue(null),
+    courseMedia: vi.fn().mockResolvedValue({}),
+    attachCourseMedia: vi.fn(),
     createFile: vi.fn(),
     ...overrides,
   };
@@ -79,6 +81,13 @@ describe("servicio de autoría de contenido", () => {
   it("bloquea la edición mientras el curso está en revisión", async () => {
     const service = createAuthoringService(repository({ courseAccess: vi.fn().mockResolvedValue({ courseId, organizationId: null, status: "review", assigned: true }) }));
     await expect(service.getContent(courseId, actorId, "instructor")).rejects.toMatchObject({ code: "COURSE_UNDER_REVIEW" });
+  });
+
+  it("rechaza archivos declarados como video que no contienen una firma MP4", async () => {
+    const repo = repository();
+    await expect(createAuthoringService(repo).uploadMedia(courseId, "intro", Buffer.from("texto"), "prueba.mp4", "video/mp4", actorId, "instructor"))
+      .rejects.toMatchObject({ status: 415, code: "INVALID_COURSE_MEDIA" });
+    expect(repo.createFile).not.toHaveBeenCalled();
   });
 
   it("rechaza archivos vacíos antes de llamar a Storage", async () => {

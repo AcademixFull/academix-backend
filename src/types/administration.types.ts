@@ -23,6 +23,7 @@ export interface ManagedInstructor {
 }
 
 export interface ManagedCourse {
+  mediaReady?: boolean;
   id: string;
   slug: string;
   title: string;

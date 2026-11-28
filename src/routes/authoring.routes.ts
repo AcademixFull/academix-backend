@@ -9,6 +9,7 @@ import {
   updateModule,
   updateResource,
   uploadCourseFile,
+  uploadCourseMedia,
 } from "../controllers/authoring.controller";
 import { requireAuth } from "../middleware/require-auth";
 
@@ -27,5 +28,7 @@ router.post(
   express.raw({ type: () => true, limit: "25mb" }),
   uploadCourseFile
 );
+
+router.post("/courses/:courseId/media/:kind", express.raw({ type: () => true, limit: "25mb" }), uploadCourseMedia);
 
 export default router;

@@ -1,3 +1,5 @@
+import type { CourseMedia } from "../utils/course-media";
+
 export type CourseContentStatus = "draft" | "review" | "published" | "archived" | "moderated";
 
 export interface AuthoringResource {
@@ -37,6 +39,7 @@ export interface AuthoringCourseContent {
   courseId: string;
   status: CourseContentStatus;
   modules: AuthoringModule[];
+  media?: CourseMedia;
 }
 
 export interface UploadedCourseFile {
