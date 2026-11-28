@@ -280,7 +280,7 @@ async function hydrateCourses(rows: CourseRow[], includeIntro = false): Promise<
     ...users.map((row) => row.fk_archivo_foto).filter((id): id is string => Boolean(id)),
   ]);
   const filesResult = fileIds.length
-    ? await supabaseAdmin.from("archivos").select("id_archivo,ruta_storage,mime_type,fk_curso_contenido").in("id_archivo", fileIds).eq("activo", true)
+    ? await supabaseAdmin.from("archivos").select("id_archivo,ruta_storage,mime_type,fk_curso_contenido,uso_presentacion").in("id_archivo", fileIds).eq("activo", true)
     : { data: [], error: null };
   if (filesResult.error) throw databaseFailure();
 

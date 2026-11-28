@@ -79,6 +79,7 @@ export interface FileRecordInput {
   extension: string;
   sizeBytes: number;
   sha256: string;
+  mediaKind?: CourseMediaKind;
 }
 
 export interface AuthoringRepository {
@@ -197,7 +198,7 @@ export const authoringRepository: AuthoringRepository = {
     const ids = [course.fk_archivo_portada, course.fk_archivo_video].filter(Boolean);
     if (!ids.length) return {};
     const { data, error: fileError } = await supabaseAdmin.from("archivos")
-      .select("id_archivo,ruta_storage,mime_type,fk_curso_contenido").in("id_archivo", ids).eq("activo", true);
+      .select("id_archivo,ruta_storage,mime_type,fk_curso_contenido,uso_presentacion").in("id_archivo", ids).eq("activo", true);
     if (fileError) throw databaseError(fileError);
     const files = new Map((data as CourseMediaFile[] ?? []).map((file) => [file.id_archivo, file]));
     const cover = courseMediaPath(files.get(course.fk_archivo_portada), courseId, "cover");
@@ -311,7 +312,7 @@ export const authoringRepository: AuthoringRepository = {
   },
 
   async createFile(input) {
-    const { data, error } = await supabaseAdmin.from("archivos").insert({ fk_tipo_archivo: input.typeId, nombre_original: input.originalName, nombre_almacenado: input.storedName, ruta_storage: input.storagePath, mime_type: input.mimeType, extension: input.extension, tamano_bytes: input.sizeBytes, hash_archivo: input.sha256, publico: false, activo: true, fk_curso_contenido: input.courseId, subido_por: input.actorId, actualizado_por: input.actorId }).select("id_archivo,nombre_original,mime_type,tamano_bytes,hash_archivo,fecha_subida").single();
+    const { data, error } = await supabaseAdmin.from("archivos").insert({ fk_tipo_archivo: input.typeId, nombre_original: input.originalName, nombre_almacenado: input.storedName, ruta_storage: input.storagePath, mime_type: input.mimeType, extension: input.extension, tamano_bytes: input.sizeBytes, hash_archivo: input.sha256, publico: false, activo: true, uso_presentacion: input.mediaKind ?? null, fk_curso_contenido: input.courseId, subido_por: input.actorId, actualizado_por: input.actorId }).select("id_archivo,nombre_original,mime_type,tamano_bytes,hash_archivo,fecha_subida").single();
     if (error) throw databaseError(error);
     const row = data as { id_archivo: string; nombre_original: string; mime_type: string; tamano_bytes: number | string; hash_archivo: string; fecha_subida: string };
     return { id: row.id_archivo, originalName: row.nombre_original, mimeType: row.mime_type, sizeBytes: Number(row.tamano_bytes), sha256: row.hash_archivo, createdAt: row.fecha_subida };

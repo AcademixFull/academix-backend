@@ -95,7 +95,7 @@ export function createAuthoringService(repository: AuthoringRepository, scopedOr
     return requireEntity(await repository.resourceCourseId(resourceId), "RESOURCE_NOT_FOUND", "El recurso solicitado no existe.");
   }
 
-  async function saveFile(courseId: string, body: Buffer, originalName: string, mimeType: string, actorId: string) {
+  async function saveFile(courseId: string, body: Buffer, originalName: string, mimeType: string, actorId: string, mediaKind?: CourseMediaKind) {
     if (!Buffer.isBuffer(body) || body.length === 0) {
       throw new AppError(422, "EMPTY_FILE", "Debes enviar un archivo.");
     }
@@ -121,7 +121,7 @@ export function createAuthoringService(repository: AuthoringRepository, scopedOr
     if (error) throw new AppError(502, "STORAGE_UPLOAD_FAILED", "No fue posible almacenar el archivo.");
 
     try {
-      const file = await repository.createFile({ courseId, actorId, typeId, originalName: fileName, storedName, storagePath, mimeType: normalizedMime, extension, sizeBytes: body.length, sha256 });
+      const file = await repository.createFile({ courseId, actorId, typeId, originalName: fileName, storedName, storagePath, mimeType: normalizedMime, extension, sizeBytes: body.length, sha256, mediaKind });
       return { file, storagePath };
     } catch (error) {
       await supabaseAdmin.storage.from(COURSE_CONTENT_BUCKET).remove([storagePath]);
@@ -182,7 +182,7 @@ export function createAuthoringService(repository: AuthoringRepository, scopedOr
           : "Sube un video introductorio MP4 válido.");
       }
       if (access.stateId === undefined) throw new AppError(409, "COURSE_STATE_CHANGED", "Vuelve a abrir el curso.");
-      const { file, storagePath } = await saveFile(courseId, body, originalName, normalizedMime, actorId);
+      const { file, storagePath } = await saveFile(courseId, body, originalName, normalizedMime, actorId, kind);
       const attached = await repository.attachCourseMedia(courseId, access.stateId, kind, file.id, actorId);
       if (!attached) {
         await supabaseAdmin.from("archivos").delete().eq("id_archivo", file.id);

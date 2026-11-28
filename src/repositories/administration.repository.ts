@@ -246,6 +246,7 @@ function mappedDatabaseError(error: { code?: string; message?: string }): AppErr
   const customErrors: Record<string, [number, string, string]> = {
     ADMIN_REQUIRED: [403, "ROLE_FORBIDDEN", "Se requiere el rol Administrador."],
     USER_NOT_FOUND: [404, "USER_NOT_FOUND", "El usuario solicitado no existe."],
+    COURSE_MEDIA_REQUIRED: [422, "COURSE_MEDIA_REQUIRED", "El curso requiere una portada y un video introductorio."],
     COURSE_NOT_FOUND: [404, "COURSE_NOT_FOUND", "El curso solicitado no existe."],
     INSTRUCTOR_NOT_FOUND: [404, "INSTRUCTOR_NOT_FOUND", "El instructor solicitado no existe."],
     LAST_ADMIN_REQUIRED: [409, "LAST_ADMIN_REQUIRED", "No puedes retirar al último administrador."],

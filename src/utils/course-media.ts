@@ -16,6 +16,7 @@ export interface CourseMediaFile {
   ruta_storage: string;
   mime_type: string;
   fk_curso_contenido: string | null;
+  uso_presentacion: CourseMediaKind | null;
 }
 
 export function isCourseMediaType(kind: CourseMediaKind, mime: string) {
@@ -30,7 +31,7 @@ export function matchesCourseMediaBytes(body: Buffer, mime: string) {
 }
 
 export function courseMediaPath(file: CourseMediaFile | undefined, courseId: string, kind: CourseMediaKind) {
-  if (file?.fk_curso_contenido !== courseId || !isCourseMediaType(kind, file.mime_type)) return undefined;
+  if (file?.fk_curso_contenido !== courseId || file.uso_presentacion !== kind || !isCourseMediaType(kind, file.mime_type)) return undefined;
   const name = file.ruta_storage.slice(`courses/${courseId}/`.length);
   return file.ruta_storage.startsWith(`courses/${courseId}/`) && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name) ? file.ruta_storage : undefined;
 }
